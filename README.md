@@ -39,16 +39,27 @@ python poc_prefix_smoke.py --model codellama/CodeLlama-7b-Instruct-hf
 ```
 看到「✅ prefix 生效、policy≠reference」才繼續往下。
 
-### 步驟 1：產生 ProSec 資料
+### 步驟 1：取得 ProSec 偏好資料
 
-到 `../ProSec` 跑它的 pipeline（target model 用 **CodeLlama-7B-Instruct**，
-因為要能跟隨指令生碼 + 自我修復）。產出最終混合資料後轉成偏好格式：
+ProSec 已把最終混合(Dsec+Dnorm)偏好資料**發佈在 HuggingFace**，第一階段可
+**直接下載，免自己跑 vLLM+Claude 生成**：
+
+| HF 資料集 | target 分佈 | 筆數 | 欄位 |
+|---|---|---|---|
+| `prosecalign/prosec-mixed-phi3mini-4k-inst` | Phi-3-mini（第一階段用） | 45.8k | `original_instruction` / `fixed_code` / `original_code` / `lang` / `cwe` / `benign` |
+| `prosecalign/prosec-mixed-clm7b-inst` | CodeLlama-7B（第二階段） | 61.2k | 同上 |
+
+欄位名與本轉換腳本的預設相符，**不需覆寫**：
 
 ```bash
+# 第一階段（Phi-3-mini）
 python data/convert_prosec_to_pref.py \
-    --in_jsonl <ProSec混合資料>.jsonl \
+    --hf_dataset prosecalign/prosec-mixed-phi3mini-4k-inst \
     --out data/train_pref.jsonl
 ```
+
+> 若日後要自己用 CodeLlama 生 in-distribution 資料，再到 `../ProSec` 跑它的
+> pipeline（target 用 CodeLlama-7B-Instruct），產出後一樣用本腳本 `--in_jsonl` 轉換。
 
 ### 步驟 2：訓練 prefix
 
