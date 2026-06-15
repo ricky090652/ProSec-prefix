@@ -1,0 +1,20 @@
+# venv / python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# 訓練產物 / 權重
+outputs/
+checkpoints/
+*.bin
+*.safetensors
+wandb/
+
+# 資料（大檔；只追蹤 sample 與轉換腳本）
+data/*.jsonl
+!data/sample_pref.jsonl
+
+# 雜項
+.DS_Store
+*.log

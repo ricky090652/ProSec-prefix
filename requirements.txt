@@ -1,0 +1,10 @@
+# prosec-prefix —— 現代技術棧（與舊 SVEN 的 torch1.13/transformers4.25 完全隔離）
+# 建議新開一個獨立 venv，不要沿用 sven 的 .venv*
+torch>=2.1
+transformers>=4.43,<4.47
+peft>=0.12
+trl>=0.11,<0.13
+accelerate>=0.33
+datasets>=2.20
+# 選用：4-bit 載入 CodeLlama-7B 以省顯存
+bitsandbytes>=0.43
