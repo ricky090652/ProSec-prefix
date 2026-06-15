@@ -77,6 +77,9 @@ def main():
                     help="只取前 N 筆訓練（做隨機/小子集過渡用；正式跑全量時不要設）")
     ap.add_argument("--max_steps", type=int, default=-1,
                     help="覆寫 epochs，只跑固定步數（smoke 用，例如 20）")
+    ap.add_argument("--prefix_init_scale", type=float, default=0.0,
+                    help="prefix 初始值縮放。0=全零起步(policy≈ref，仿SVEN，最穩)；"
+                         "1=PEFT 預設隨機初始化(會不穩)；可試 0.0 / 0.01")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
@@ -151,6 +154,19 @@ def main():
         trainer_kwargs["tokenizer"] = tokenizer
 
     trainer = DPOTrainer(**trainer_kwargs)
+
+    # === 縮小 prefix 初始值，讓 policy 起步 ≈ reference（仿 SVEN 的零初始化）===
+    # PEFT PrefixTuning 預設隨機初始化，會讓 policy 從第 0 步就大幅偏離 base，
+    # 造成 reward 量級爆炸 / loss 不收斂。scale=0 → 全零起步；可試 0.0 / 0.01。
+    if args.prefix_init_scale != 1.0:
+        n_scaled = 0
+        with torch.no_grad():
+            for n, p in trainer.model.named_parameters():
+                if p.requires_grad:  # 只有 prefix 參數可訓練
+                    p.mul_(args.prefix_init_scale)
+                    n_scaled += p.numel()
+        print(f"prefix 初始值縮放 ×{args.prefix_init_scale}（{n_scaled} 個參數）")
+
     trainer.train()
     trainer.save_model(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
