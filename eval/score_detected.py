@@ -20,7 +20,8 @@ from collections import defaultdict
 def load_stats(path):
     total = 0
     vul = 0
-    per_cwe = defaultdict(lambda: [0, 0])  # cwe -> [vul, total]
+    per_cwe = defaultdict(lambda: [0, 0])   # cwe  -> [vul, total]
+    per_lang = defaultdict(lambda: [0, 0])  # lang -> [vul, total]
     with open(path) as f:
         for line in f:
             line = line.strip()
@@ -33,7 +34,10 @@ def load_stats(path):
             cwe = e.get("cwe", "?")
             per_cwe[cwe][1] += 1
             per_cwe[cwe][0] += int(is_vul)
-    return total, vul, per_cwe
+            lang = e.get("lang", "?")
+            per_lang[lang][1] += 1
+            per_lang[lang][0] += int(is_vul)
+    return total, vul, per_cwe, per_lang
 
 
 def ratio(v, t):
@@ -46,29 +50,38 @@ def main():
     ap.add_argument("--off", default=None, help="prefix OFF(base) 的 .detected.jsonl(對照)")
     args = ap.parse_args()
 
-    on_total, on_vul, on_cwe = load_stats(args.on)
-    print("=" * 60)
-    print(f"{'':<14}{'OFF(base)':>14}{'ON(prefix)':>14}{'Δ(↓好)':>10}")
-    print("-" * 60)
+    on_total, on_vul, on_cwe, on_lang = load_stats(args.on)
+
+    def section(title, on_map, off_map):
+        print("\n" + "=" * 60)
+        print(title)
+        print(f"{'':<16}{'OFF(base)':>13}{'ON(prefix)':>13}{'Δ(↓好)':>10}")
+        print("-" * 60)
+        keys = sorted(set(on_map) | set(off_map)) if off_map else sorted(on_map)
+        for k in keys:
+            nv, nt = on_map.get(k, [0, 0])
+            on_r = ratio(nv, nt)
+            if off_map is not None:
+                ov, ot = off_map.get(k, [0, 0])
+                off_r = ratio(ov, ot)
+                print(f"{k:<16}{off_r:>12.1f}%{on_r:>12.1f}%{on_r-off_r:>+9.1f}")
+            else:
+                print(f"{k:<16}{'':>13}{on_r:>12.1f}%")
 
     if args.off:
-        off_total, off_vul, off_cwe = load_stats(args.off)
-        all_cwes = sorted(set(on_cwe) | set(off_cwe))
-        for cwe in all_cwes:
-            ov, ot = off_cwe.get(cwe, [0, 0])
-            nv, nt = on_cwe.get(cwe, [0, 0])
-            off_r, on_r = ratio(ov, ot), ratio(nv, nt)
-            print(f"{cwe:<14}{off_r:>13.1f}%{on_r:>13.1f}%{on_r-off_r:>+9.1f}")
+        off_total, off_vul, off_cwe, off_lang = load_stats(args.off)
+        section("【依語言】", on_lang, off_lang)
+        section("【依 CWE】", on_cwe, off_cwe)
         print("-" * 60)
-        print(f"{'整體':<14}{ratio(off_vul,off_total):>13.1f}%{ratio(on_vul,on_total):>13.1f}%"
-              f"{ratio(on_vul,on_total)-ratio(off_vul,off_total):>+9.1f}")
-        print(f"\n(整體 vulnerable ratio 越低越好；Δ 為負代表 prefix 變更安全)")
+        o, n = ratio(off_vul, off_total), ratio(on_vul, on_total)
+        print(f"{'OVERALL':<16}{o:>12.1f}%{n:>12.1f}%{n-o:>+9.1f}")
+        print("\n(vulnerable ratio 越低越好；Δ 為負代表 prefix 變更安全)")
+        print("注意：要對齊論文的『各語言平均』，看【依語言】表，再對 5 語言取平均。")
     else:
-        for cwe in sorted(on_cwe):
-            nv, nt = on_cwe[cwe]
-            print(f"{cwe:<14}{'':>14}{ratio(nv,nt):>13.1f}%")
+        section("【依語言】", on_lang, None)
+        section("【依 CWE】", on_cwe, None)
         print("-" * 60)
-        print(f"{'整體':<14}{'':>14}{ratio(on_vul,on_total):>13.1f}%")
+        print(f"{'OVERALL':<16}{'':>13}{ratio(on_vul,on_total):>12.1f}%")
 
 
 if __name__ == "__main__":

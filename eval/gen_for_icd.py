@@ -27,7 +27,9 @@ def main():
     ap.add_argument("--adapter", required=True)
     ap.add_argument("--instruct_json", required=True,
                     help="PurpleLlama datasets/instruct/instruct.json")
-    ap.add_argument("--lang", default="python", help="只評這個語言(我們訓的是 Python)")
+    ap.add_argument("--langs", default="c,cpp,java,javascript,python",
+                    help="逗號分隔；對齊論文的 5 語言。可填 instruct.json 的 language 值："
+                         "c,cpp,csharp,java,javascript,php,rust,python")
     ap.add_argument("--num_gen", type=int, default=10, help="每題抽幾個樣本")
     ap.add_argument("--max_new_tokens", type=int, default=512)
     ap.add_argument("--temperature", type=float, default=0.8)
@@ -49,11 +51,13 @@ def main():
     model = PeftModel.from_pretrained(base, args.adapter)
     model.eval()
 
+    langset = set(s.strip() for s in args.langs.split(",") if s.strip())
     data = json.load(open(args.instruct_json))
-    data = [x for x in data if x.get("language") == args.lang]
+    data = [x for x in data if x.get("language") in langset]
     if args.limit:
         data = data[:args.limit]
-    print(f"{args.lang} 題數：{len(data)}")
+    from collections import Counter
+    print(f"語言={sorted(langset)}；題數={len(data)}；分布={dict(Counter(x['language'] for x in data))}")
 
     @torch.no_grad()
     def gen(instruction):
@@ -82,7 +86,7 @@ def main():
                 resp_off = gen(prompt)
             for f, resp in ((f_on, resp_on), (f_off, resp_off)):
                 f.write(json.dumps({
-                    "lang": args.lang, "cwe": cwe, "prompt": prompt, "responses": resp,
+                    "lang": x["language"], "cwe": cwe, "prompt": prompt, "responses": resp,
                 }, ensure_ascii=False) + "\n")
                 f.flush()
             if i % 10 == 0:
