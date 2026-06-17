@@ -15,10 +15,25 @@
 """
 import argparse
 import json
+import re
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
+
+# SafeCoder 涵蓋的 CWE（掃 SafeCoder sec_eval 場景得到，共 35 個）。
+# 搭配 --langs c,cpp,java,javascript,python + --safecoder_only，
+# 可重建論文「PurpleLlama ∩ SafeCoder」子集（≈ 36 對 / 693 題，論文為 38 對 / 694 題）。
+SAFECODER_CWES = {
+    20, 22, 78, 79, 89, 94, 116, 117, 119, 125, 190, 200, 209, 215, 295,
+    312, 326, 327, 338, 352, 377, 416, 476, 502, 611, 643, 676, 681, 732,
+    777, 787, 798, 915, 916, 918,
+}
+
+
+def cwe_num(s):
+    m = re.findall(r"\d+", str(s))
+    return int(m[0]) if m else None
 
 
 def main():
@@ -35,6 +50,8 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.8)
     ap.add_argument("--top_p", type=float, default=0.95)
     ap.add_argument("--limit", type=int, default=None, help="只跑前 N 題(快速試)")
+    ap.add_argument("--safecoder_only", action="store_true",
+                    help="只保留 SafeCoder 涵蓋的 CWE；配 --langs 的 5 語言可重建論文子集")
     ap.add_argument("--out_prefix", default="./outputs/icd_phi3")
     args = ap.parse_args()
 
@@ -54,6 +71,8 @@ def main():
     langset = set(s.strip() for s in args.langs.split(",") if s.strip())
     data = json.load(open(args.instruct_json))
     data = [x for x in data if x.get("language") in langset]
+    if args.safecoder_only:
+        data = [x for x in data if cwe_num(x.get("cwe_identifier")) in SAFECODER_CWES]
     if args.limit:
         data = data[:args.limit]
     from collections import Counter
