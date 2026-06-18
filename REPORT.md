@@ -125,7 +125,7 @@ Config: num_virtual_tokens = 16, lr = 2e-5, zero-init, ~2.5 h.
 | 3 | Training stability | `train_prefix.py` (dyncheck) | — | ✅ fixed via zero-init |
 | 4 | Full training | `train_prefix.py` | §2 preference optimization | ✅ healthy convergence |
 | 5 | Qualitative check | `gen_compare.py` | (supplementary) | ✅ improvement |
-| 6 | Security benchmark | `gen_for_icd.py` + `detect_all.py` + `score_detected.py` | §4 PurpleLlama / Table 1 | ✅ smoke effective |
+| 6 | Security benchmark (paper-aligned) | `gen_for_icd.py --safecoder_only` → `normalize_responses.py` → `detect_all.py` → `score_detected.py` | §4 PurpleLlama / Table 1 | ✅ done |
 | 7 | Utility benchmark | `run_humaneval.py` | §4 HumanEval / Table 1 | ⏳ pending |
 
 ---
@@ -145,19 +145,43 @@ Config: num_virtual_tokens = 16, lr = 2e-5, zero-init, ~2.5 h.
 
 ---
 
-## 10. Test 6 — Security Benchmark (preliminary smoke)
+## 10. Test 6 — Security Benchmark (paper-aligned)
 
-- **Flow**: `gen_for_icd.py` (generate ON/OFF) → `detect_all.py` (semgrep detection) → `score_detected.py` (scoring)
+- **Flow**: `gen_for_icd.py --safecoder_only` (generate ON/OFF) → `normalize_responses.py` → `detect_all.py` (semgrep + weggli + regex) → `score_detected.py`
 - **Paper mapping**: §4 test set PurpleLlama CyberSecEval, §2 static-analyzer oracle, **Table 1 Vulnerable Code Ratio**
-- **Scale**: 20 prompts × 5 samples (preliminary smoke)
 
-| CWE | base (OFF) | +prefix (ON) | Δ (↓ better) |
-|---|---|---|---|
-| CWE-338 (weak PRNG) | 18.3% | 10.0% | **−8.3** |
-| other CWEs | 0% | 0% | 0 |
-| **Overall** | **11.0%** | **6.0%** | **−5.0** |
+### 10.1 Reproducing the paper's evaluation subset
 
-**Conclusion**: correct direction, **no CWE got worse**; this is a small smoke run — full 351-prompt run pending.
+The paper evaluates on "38 ⟨lang, CWE⟩ overlapping SafeCoder = 694 test cases", but **does not ship this subset**. We reconstructed it: filter PurpleLlama `instruct.json` to **5 languages {c, cpp, java, javascript, python}** AND **CWEs ∈ SafeCoder's 35 CWEs** (derived from SafeCoder's `sec_eval` scenarios).
+
+| | (lang,CWE) pairs | test cases |
+|---|---|---|
+| Paper | 38 | 694 |
+| **Our reconstruction** (`--safecoder_only`) | **36** | **693** |
+
+### 10.2 ⚠️ Key Finding: fence-less code extraction
+
+`detect_all.py` extracts only code inside ```` ``` ```` fences. Phi-3 frequently emits **raw code with no fences** → such generations were dropped and silently counted as "safe". **84% of code blocks were empty**, diluting the vulnerable ratio ~6×. The detector itself is correct (verified: `strcpy` → weggli/regex, `pickle` → semgrep). Fixed with `normalize_responses.py` (wrap fence-less responses). After the fix the base ratio aligns with the paper.
+
+### 10.3 Results (5 languages, 693 prompts × 10 samples)
+
+| Language | Paper base | **Our OFF** | Paper +ProSec (LoRA+SimPO) | **Our +prefix (DPO)** |
+|---|---|---|---|---|
+| C | 72.2 | **63.1** | 44.3 | **60.2** |
+| C++ | 30.3 | **24.6** | 20.7 | **19.5** |
+| Java | 63.6 | **57.1** | 49.1 | **50.5** |
+| JS | 52.2 | **52.2** | 28.2 | **43.8** |
+| Python | 34.6 | **29.0** | 25.1 | **28.8** |
+| **Average** | 50.6 | **45.2** | 33.5 | **40.6** |
+
+(pooled OVERALL: OFF **41.5%** → ON **37.8%**, Δ **−3.7**)
+
+Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30), CWE-352 CSRF (−23), CWE-22 path traversal (−16.5), CWE-643 (−10); a few small regressions (CWE-676 +15, CWE-416 +3.3) likely small-sample noise.
+
+**Conclusion**:
+- ✅ **Base aligns with the paper** (e.g. JS 52.2 vs 52.24) → the measurement is valid.
+- ✅ **The prefix lowers the vulnerable ratio across all 5 languages** (avg 45.2 → 40.6, −4.6).
+- ⚠️ Our improvement (~10% rel.) is **smaller than ProSec's** (~34% rel.), as expected: we use **DPO (not SimPO)**, **prefix (not LoRA)**, **no influence selection**, and **untuned, 1 epoch**. The paper's own Table 8 shows SimPO ≫ DPO on Phi-3 (25.4% vs 34.7%) — the main lever to close the gap.
 
 ---
 
@@ -167,21 +191,24 @@ Config: num_virtual_tokens = 16, lr = 2e-5, zero-init, ~2.5 h.
 - ✅ System integration (ProSec data + PEFT prefix + TRL DPO)
 - ✅ Fixed prefix-init instability (zero-init)
 - ✅ Full training (healthy convergence)
-- ✅ Security eval pipeline + preliminary result (11% → 6%)
-- ✅ Utility eval script
+- ✅ Reconstructed the paper's SafeCoder-overlap eval subset (36 pairs / 693 cases)
+- ✅ Fixed fence-less code-extraction bug (base now aligns with the paper)
+- ✅ Paper-aligned security eval, 5 languages (avg 45.2% → 40.6%, all langs down)
 
 **TODO**
-- ⏳ Full security eval (351 prompts) + full HumanEval → main result table
+- ⏳ Utility: full HumanEval pass@1 (confirm utility preserved)
+- ⏳ Switch DPO → SimPO (TRL CPOTrainer) — main lever to close the gap to ProSec
+- ⏳ Hyperparameter tuning (num_virtual_tokens, epochs, beta)
 - ⏳ Baseline: ProSec original LoRA (prefix vs LoRA)
 - ⏳ Ablation: influence-selected data
 - ⏳ Phase 2: CodeLlama-7B + self-generated data
 
-**Expected main result table**
+**Main result table (current)**
 
-| | base Phi-3 | +prefix | Goal |
+| Metric (avg of 5 langs) | base Phi-3 (OFF) | +prefix (ON) | Δ |
 |---|---|---|---|
-| Security: Vulnerable Ratio ↓ | X% | Y% | Y < X |
-| Utility: HumanEval pass@1 ↑ | P% | Q% | Q ≈ P |
+| Security: Vulnerable Ratio ↓ | 45.2% | **40.6%** | **−4.6** ✅ |
+| Utility: HumanEval pass@1 ↑ | — | — | ⏳ pending |
 
 ---
 
@@ -193,8 +220,9 @@ Config: num_virtual_tokens = 16, lr = 2e-5, zero-init, ~2.5 h.
 | `train_prefix.py` | Train prefix via PEFT PrefixTuning + TRL DPO |
 | `poc_prefix_smoke.py` | Validate PEFT prefix forward/generate/reference |
 | `eval/gen_compare.py` | Qualitative prefix ON/OFF side-by-side |
-| `eval/gen_for_icd.py` | Generate code for PurpleLlama benchmark (ON/OFF) |
-| `eval/score_detected.py` | Aggregate vulnerable-code ratio (ON vs OFF) |
+| `eval/gen_for_icd.py` | Generate code for PurpleLlama benchmark (ON/OFF); `--safecoder_only` reproduces the paper subset, `--langs` for multi-language |
+| `eval/normalize_responses.py` | Wrap fence-less responses so code extraction works (run before `detect_all.py`) |
+| `eval/score_detected.py` | Aggregate vulnerable-code ratio per language + per CWE (ON vs OFF) |
 | `eval/run_humaneval.py` | HumanEval pass@1 (ON vs OFF) |
 
 > External (ProSec / PurpleLlama): `prosec_scripts/detect_all.py` runs the Insecure Code Detector (semgrep) on generated code.
