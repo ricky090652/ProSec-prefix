@@ -126,7 +126,7 @@ Config: num_virtual_tokens = 16, lr = 2e-5, zero-init, ~2.5 h.
 | 4 | Full training | `train_prefix.py` | §2 preference optimization | ✅ healthy convergence |
 | 5 | Qualitative check | `gen_compare.py` | (supplementary) | ✅ improvement |
 | 6 | Security benchmark (paper-aligned) | `gen_for_icd.py --safecoder_only` → `normalize_responses.py` → `detect_all.py` → `score_detected.py` | §4 PurpleLlama / Table 1 | ✅ done |
-| 7 | Utility benchmark | `run_humaneval.py` | §4 HumanEval / Table 1 | ⏳ pending |
+| 7 | Utility benchmark | `run_humaneval.py` | §4 HumanEval / Table 1 | ✅ done (small cost) |
 
 ---
 
@@ -185,7 +185,24 @@ Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30), C
 
 ---
 
-## 11. Status & TODO
+## 11. Test 7 — Utility Benchmark (HumanEval)
+
+- **Script**: `run_humaneval.py` — greedy pass@1, generated code executed against HumanEval tests, prefix ON vs OFF.
+- **Scale**: 164 problems (standard Python HumanEval).
+
+| | pass@1 |
+|---|---|
+| OFF (base) | 64.6% |
+| ON (prefix) | **61.6%** |
+| Δ | **−3.0** |
+
+**Conclusion**: the prefix costs a small amount of utility (−3.0 pts, ~4.7% rel.). This **differs from ProSec**, which *preserves / slightly improves* utility — because the paper's utility preservation relies on **Dnorm + influence selection** (§3.3), which we have **not yet applied**. So influence selection is promoted from "optional ablation" to a needed step.
+
+> Note: our absolute pass@1 (Python HumanEval) is **not** directly comparable to the paper's HumanEval-Multi; only the Δ direction is meaningful (ours −3.0 vs paper ≈ flat/up).
+
+---
+
+## 12. Status & TODO
 
 **Done**
 - ✅ System integration (ProSec data + PEFT prefix + TRL DPO)
@@ -194,21 +211,23 @@ Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30), C
 - ✅ Reconstructed the paper's SafeCoder-overlap eval subset (36 pairs / 693 cases)
 - ✅ Fixed fence-less code-extraction bug (base now aligns with the paper)
 - ✅ Paper-aligned security eval, 5 languages (avg 45.2% → 40.6%, all langs down)
+- ✅ Utility eval (HumanEval pass@1 64.6% → 61.6%, small −3.0 cost)
 
 **TODO**
-- ⏳ Utility: full HumanEval pass@1 (confirm utility preserved)
-- ⏳ Switch DPO → SimPO (TRL CPOTrainer) — main lever to close the gap to ProSec
+- ⏳ **Influence selection (Dnorm)** — recover the utility cost (paper §3.3 mechanism)
+- ⏳ Switch DPO → SimPO (TRL CPOTrainer) — main lever to close the security gap to ProSec
 - ⏳ Hyperparameter tuning (num_virtual_tokens, epochs, beta)
 - ⏳ Baseline: ProSec original LoRA (prefix vs LoRA)
-- ⏳ Ablation: influence-selected data
 - ⏳ Phase 2: CodeLlama-7B + self-generated data
 
 **Main result table (current)**
 
-| Metric (avg of 5 langs) | base Phi-3 (OFF) | +prefix (ON) | Δ |
+| Metric | base Phi-3 (OFF) | +prefix (ON) | Δ |
 |---|---|---|---|
-| Security: Vulnerable Ratio ↓ | 45.2% | **40.6%** | **−4.6** ✅ |
-| Utility: HumanEval pass@1 ↑ | — | — | ⏳ pending |
+| Security: Vulnerable Ratio ↓ (avg 5 langs) | 45.2% | **40.6%** | **−4.6** ✅ |
+| Utility: HumanEval pass@1 ↑ (Python, 164) | 64.6% | **61.6%** | **−3.0** ⚠️ |
+
+**Takeaway**: the prefix improves security (−4.6) at a small utility cost (−3.0). The cost is expected to shrink with **Dnorm influence selection** (paper's utility-preservation mechanism) and **SimPO**, both still to be applied.
 
 ---
 
