@@ -64,9 +64,9 @@ def main():
             if off_map is not None:
                 ov, ot = off_map.get(k, [0, 0])
                 off_r = ratio(ov, ot)
-                print(f"{k:<16}{off_r:>12.1f}%{on_r:>12.1f}%{on_r-off_r:>+9.1f}")
+                print(f"{k:<16}{off_r:>12.2f}%{on_r:>12.2f}%{on_r-off_r:>+9.2f}")
             else:
-                print(f"{k:<16}{'':>13}{on_r:>12.1f}%")
+                print(f"{k:<16}{'':>13}{on_r:>12.2f}%")
 
     if args.off:
         off_total, off_vul, off_cwe, off_lang = load_stats(args.off)
@@ -74,7 +74,7 @@ def main():
         section("【依 CWE】", on_cwe, off_cwe)
         print("-" * 60)
         o, n = ratio(off_vul, off_total), ratio(on_vul, on_total)
-        print(f"{'OVERALL':<16}{o:>12.1f}%{n:>12.1f}%{n-o:>+9.1f}")
+        print(f"{'OVERALL':<16}{o:>12.2f}%{n:>12.2f}%{n-o:>+9.2f}")
         print("\n(vulnerable ratio 越低越好；Δ 為負代表 prefix 變更安全)")
         print("注意：要對齊論文的『各語言平均』，看【依語言】表，再對 5 語言取平均。")
     else:
