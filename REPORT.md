@@ -167,20 +167,20 @@ The paper evaluates on "38 ⟨lang, CWE⟩ overlapping SafeCoder = 694 test case
 
 | Language | Paper base | **Our OFF** | Paper +ProSec (LoRA+SimPO) | **Our +prefix (DPO)** |
 |---|---|---|---|---|
-| C | 72.2 | **63.1** | 44.3 | **60.2** |
-| C++ | 30.3 | **24.6** | 20.7 | **19.5** |
-| Java | 63.6 | **57.1** | 49.1 | **50.5** |
-| JS | 52.2 | **52.2** | 28.2 | **43.8** |
-| Python | 34.6 | **29.0** | 25.1 | **28.8** |
-| **Average** | 50.6 | **45.2** | 33.5 | **40.6** |
+| C | 72.17 | **63.14** | 44.27 | **60.20** |
+| C++ | 30.26 | **24.59** | 20.74 | **19.46** |
+| Java | 63.56 | **57.11** | 49.09 | **50.48** |
+| JS | 52.24 | **52.24** | 28.21 | **43.76** |
+| Python | 34.63 | **28.99** | 25.05 | **28.82** |
+| **Average** | 50.57 | **45.21** | 33.47 | **40.54** |
 
-(pooled OVERALL: OFF **41.5%** → ON **37.8%**, Δ **−3.7**)
+(pooled OVERALL: OFF **41.47%** → ON **37.81%**, Δ **−3.67**)
 
-Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30), CWE-352 CSRF (−23), CWE-22 path traversal (−16.5), CWE-643 (−10); a few small regressions (CWE-676 +15, CWE-416 +3.3) likely small-sample noise.
+Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30.00), CWE-352 CSRF (−23.33), CWE-22 path traversal (−16.52), CWE-643 (−10.00); a few small regressions (CWE-676 +15.00, CWE-416 +3.33) likely small-sample noise.
 
 **Conclusion**:
-- ✅ **Base aligns with the paper** (e.g. JS 52.2 vs 52.24) → the measurement is valid.
-- ✅ **The prefix lowers the vulnerable ratio across all 5 languages** (avg 45.2 → 40.6, −4.6).
+- ✅ **Base aligns with the paper** (e.g. JS 52.24 vs 52.24) → the measurement is valid.
+- ✅ **The prefix lowers the vulnerable ratio across all 5 languages** (avg 45.21 → 40.54, −4.67).
 - ⚠️ Our improvement (~10% rel.) is **smaller than ProSec's** (~34% rel.), as expected: we use **DPO (not SimPO)**, **prefix (not LoRA)**, **no influence selection**, and **untuned, 1 epoch**. The paper's own Table 8 shows SimPO ≫ DPO on Phi-3 (25.4% vs 34.7%) — the main lever to close the gap.
 
 ---
@@ -192,13 +192,13 @@ Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30), C
 
 | | pass@1 |
 |---|---|
-| OFF (base) | 64.6% |
-| ON (prefix) | **61.6%** |
-| Δ | **−3.0** |
+| OFF (base) | 64.63% |
+| ON (prefix) | **61.59%** |
+| Δ | **−3.05** |
 
-**Conclusion**: the prefix costs a small amount of utility (−3.0 pts, ~4.7% rel.). This **differs from ProSec**, which *preserves / slightly improves* utility — because the paper's utility preservation relies on **Dnorm + influence selection** (§3.3), which we have **not yet applied**. So influence selection is promoted from "optional ablation" to a needed step.
+**Conclusion**: the prefix costs a small amount of utility (−3.05 pts, ~4.7% rel.). This **differs from ProSec**, which *preserves / slightly improves* utility — because the paper's utility preservation relies on **Dnorm + influence selection** (§3.3), which we have **not yet applied**. So influence selection is promoted from "optional ablation" to a needed step.
 
-> Note: our absolute pass@1 (Python HumanEval) is **not** directly comparable to the paper's HumanEval-Multi; only the Δ direction is meaningful (ours −3.0 vs paper ≈ flat/up).
+> Note: our absolute pass@1 (Python HumanEval) is **not** directly comparable to the paper's HumanEval-Multi; only the Δ direction is meaningful (ours −3.05 vs paper ≈ flat/up).
 
 ---
 
@@ -210,8 +210,8 @@ Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30), C
 - ✅ Full training (healthy convergence)
 - ✅ Reconstructed the paper's SafeCoder-overlap eval subset (36 pairs / 693 cases)
 - ✅ Fixed fence-less code-extraction bug (base now aligns with the paper)
-- ✅ Paper-aligned security eval, 5 languages (avg 45.2% → 40.6%, all langs down)
-- ✅ Utility eval (HumanEval pass@1 64.6% → 61.6%, small −3.0 cost)
+- ✅ Paper-aligned security eval, 5 languages (avg 45.21% → 40.54%, all langs down)
+- ✅ Utility eval (HumanEval pass@1 64.63% → 61.59%, small −3.05 cost)
 
 **TODO**
 - ⏳ **Influence selection (Dnorm)** — recover the utility cost (paper §3.3 mechanism)
@@ -224,8 +224,8 @@ Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30), C
 
 | Metric | base Phi-3 (OFF) | +prefix (ON) | Δ |
 |---|---|---|---|
-| Security: Vulnerable Ratio ↓ (avg 5 langs) | 45.2% | **40.6%** | **−4.6** ✅ |
-| Utility: HumanEval pass@1 ↑ (Python, 164) | 64.6% | **61.6%** | **−3.0** ⚠️ |
+| Security: Vulnerable Ratio ↓ (avg 5 langs) | 45.21% | **40.54%** | **−4.67** ✅ |
+| Utility: HumanEval pass@1 ↑ (Python, 164) | 64.63% | **61.59%** | **−3.05** ⚠️ |
 
 **Takeaway**: the prefix improves security (−4.6) at a small utility cost (−3.0). The cost is expected to shrink with **Dnorm influence selection** (paper's utility-preservation mechanism) and **SimPO**, both still to be applied.
 
