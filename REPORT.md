@@ -254,7 +254,49 @@ Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30.00)
 
 ---
 
-## 12. Status & TODO
+## 12. Experiment 2 — lower β + more epochs (β=0.05, epochs=2)
+
+The main run above is **Exp1** (β=0.1, epochs=1). Here we lowered β (meant to preserve utility)
+but **also** raised epochs 1→2 — two confounded changes. Config: num_virtual_tokens=16, lr=2e-5,
+β=0.05, epochs=2, zero-init.
+
+### 12.1 Security (5 languages)
+
+| Language | OFF | ON | Δ |
+|---|---|---|---|
+| C | 62.16 | 51.96 | −10.20 |
+| C++ | 23.92 | 17.43 | −6.49 |
+| Java | 56.31 | 48.56 | −7.75 |
+| JS | 50.94 | 37.53 | −13.41 |
+| Python | 30.64 | 27.09 | −3.55 |
+| **Average** | 44.79 | **36.51** | **−8.28** |
+
+(pooled OVERALL: 41.66 → 34.96, Δ −6.70)
+
+### 12.2 Utility
+
+| Benchmark | OFF | ON | Δ |
+|---|---|---|---|
+| HumanEval (Python) | 64.63 | 53.05 | **−11.59** |
+| MultiPL-E JS | 59.63 | 44.10 | −15.53 |
+| MultiPL-E C++ | 46.58 | 22.36 | −24.22 |
+
+### 12.3 Analysis — confounded variables; epochs=2 over-trained
+
+| Config | Security ON avg (↓) | Utility HumanEval (↑) |
+|---|---|---|
+| **Exp1** (β=0.1, ep1) | 40.54 | **61.59** |
+| **Exp2** (β=0.05, ep2) | **36.51** | 53.05 |
+
+- Exp2 is **more secure (−4 pts)** but **much less useful (−8.5 pts HumanEval, −24 pts on C++)** → a **worse operating point** when utility matters.
+- The lower β (intended to *preserve* utility) was **overwhelmed by epochs=2**: the extra epoch over-trained the prefix, driving both more security and far more utility damage (matches StructureCoder's "more epochs → overfit").
+- The two changes were **confounded**, and epochs=2 dominated. **Lesson: change one variable at a time; keep epochs=1.**
+- **Exp1 remains the better security/utility tradeoff so far.** To isolate β, next run **β=0.05 with epochs=1**. The fragility of utility under stronger training strongly motivates **masked DPO** (loss only on the changed region), which fixes the cause structurally rather than via blunt β/epoch knobs.
+- First multilingual utility numbers (MultiPL-E js/cpp) are collected here; note absolute values use instruct-mode and are not paper-comparable, only Δ is.
+
+---
+
+## 13. Status & TODO
 
 **Done**
 - ✅ System integration (ProSec data + PEFT prefix + TRL DPO)
@@ -262,10 +304,13 @@ Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30.00)
 - ✅ Full training (healthy convergence)
 - ✅ Reconstructed the paper's SafeCoder-overlap eval subset (36 pairs / 693 cases)
 - ✅ Fixed fence-less code-extraction bug (base now aligns with the paper)
-- ✅ Paper-aligned security eval, 5 languages (avg 45.21% → 40.54%, all langs down)
-- ✅ Utility eval (HumanEval pass@1 64.63% → 61.59%, small −3.05 cost)
+- ✅ Paper-aligned security eval, 5 languages (Exp1 avg 45.21% → 40.54%, all langs down)
+- ✅ Utility eval (Exp1 HumanEval 64.63% → 61.59%, −3.05; MultiPL-E js/cpp added in Exp2)
+- ✅ Exp2 (β=0.05, ep2): more secure but utility collapses → epochs=2 over-trains; Exp1 is the better tradeoff
 
 **TODO**
+- ⏳ **Isolate β**: rerun β=0.05 with **epochs=1** (one variable at a time)
+- ⏳ **Masked / Focused DPO** — loss only on the changed region (SVEN-style mask / StructureCoder / Focused-DPO); targets the utility cost structurally
 - ⏳ **Influence selection (Dnorm)** — recover the utility cost (paper §3.3 mechanism)
 - ⏳ Switch DPO → SimPO (TRL CPOTrainer) — main lever to close the security gap to ProSec
 - ⏳ Hyperparameter tuning (num_virtual_tokens, epochs, beta)
