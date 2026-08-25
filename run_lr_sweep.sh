@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
-# S0：Prefix 學習率校準（詳見 prefix-prosec_research_plam.md §9.1）
+# Prefix 學習率校準（詳見 prefix-prosec_research_plam.md §9.1）
 #
-# 目的不是挑出要用的 adapter，是要分離兩個假設：
+# 目的不是挑出要用的 adapter，是分離兩個假設：
 #   (A) lr 太低導致 underfit  vs  (B) 目標函數/Prefix 容量的限制
-# 兩者的曲線很像，但處置完全相反。四組共用同一批 4,000 筆子集，唯一變數是 lr。
+# 兩者的曲線很像，但處置完全相反。同一批子集，唯一變數是 lr。
 #
-# 用法：  bash run_lr_sweep.sh
+# 用法：
+#   bash run_lr_sweep.sh                      # 預設 SimPO（S1 用）
+#   OBJECTIVE=dpo LRS="2e-5 1e-4 1e-3 5e-3" \
+#     OUT_DIR=outputs/lr_sweep_dpo bash run_lr_sweep.sh    # S0 用（已完成）
 set -euo pipefail
 
 MODEL="${MODEL:-microsoft/Phi-3-mini-4k-instruct}"
 TRAIN_FILE="${TRAIN_FILE:-data/train_pref.jsonl}"
-OUT_DIR="${OUT_DIR:-outputs/lr_sweep}"
-LRS="${LRS:-2e-5 1e-4 1e-3 5e-3}"
+OBJECTIVE="${OBJECTIVE:-simpo}"
+OUT_DIR="${OUT_DIR:-outputs/lr_sweep_${OBJECTIVE}}"
+# SimPO 的 reward 除以 |y|，裁剪前梯度天生比 DPO 小，最佳點可能偏高一點。
+LRS="${LRS:-1e-4 3e-4 1e-3}"
 MAX_SAMPLES="${MAX_SAMPLES:-4000}"
 SEED="${SEED:-42}"
 
@@ -24,6 +29,7 @@ if [[ ! -f "$TRAIN_FILE" ]]; then
 fi
 
 mkdir -p "$OUT_DIR"
+echo "objective：$OBJECTIVE"
 echo "資料：$TRAIN_FILE（$(wc -l < "$TRAIN_FILE") 筆，取子集 $MAX_SAMPLES / seed $SEED）"
 echo "掃描 lr：$LRS"
 echo
@@ -42,7 +48,7 @@ for LR in $LRS; do
     --max_samples "$MAX_SAMPLES" --seed "$SEED" \
     --num_virtual_tokens 16 \
     --prefix_init_scale 0 \
-    --beta 0.1 --epochs 1 --lr "$LR" \
+    --objective "$OBJECTIVE" --epochs 1 --lr "$LR" \
     --batch_size 1 --grad_accum 16 --bf16 \
     2>&1 | tee "$LOG"
   echo

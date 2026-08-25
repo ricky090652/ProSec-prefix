@@ -1,32 +1,46 @@
-"""用 ProSec 偏好資料訓練一組 prefix（PEFT PrefixTuning），透過 TRL 做 DPO。
+"""用 ProSec 偏好資料訓練一組 prefix（PEFT PrefixTuning），支援 DPO 與 SimPO。
 
 設計對應關係（沿用舊 SVEN 概念，但實作全移到現代棧）：
   - SVEN 的「sec prefix」      → PEFT PrefixTuning adapter（只訓練 prefix 參數）
-  - SVEN 的「無 prefix 參考前向」→ TRL 對 PEFT 模型自動用 disable_adapter 當 reference
-  - SVEN 的 DPO loss           → TRL DPOTrainer（beta 可調）
-  - SVEN 的 diff-level token mask → 不需要（ProSec 是整段 chosen/rejected 偏好對）
+  - SVEN 的 prefix 零初始化    → PrefixTuningConfig(init_weights="zero")
+  - ProSec 的 SimPO            → TRL CPOTrainer(loss_type="simpo", cpo_alpha=0)
+  - 舊版沿用的 DPO             → TRL DPOTrainer（保留為 ablation 用）
 
 資料格式（每行 jsonl）：{"prompt", "chosen", "rejected", ...}
   由 data/convert_prosec_to_pref.py 從 ProSec 最終資料產生。
 
 範例：
+  # S1 主線：SimPO（論文設定 beta=1.5, gamma=0.5）
   python train_prefix.py \
-      --model codellama/CodeLlama-7b-Instruct-hf \
+      --model microsoft/Phi-3-mini-4k-instruct \
       --train_file data/train_pref.jsonl \
-      --output_dir outputs/codellama7b-prefix-dpo \
-      --num_virtual_tokens 16 --beta 0.1 --lr 5e-5 \
-      --epochs 1 --batch_size 1 --grad_accum 16 --bf16
+      --output_dir outputs/phi3-prefix-simpo \
+      --objective simpo --lr 3e-4 \
+      --num_virtual_tokens 16 --epochs 1 \
+      --batch_size 1 --grad_accum 16 --bf16
 
-  # 想跑 SimPO 而非 DPO：加 --loss_type simpo（見下方說明）
+  # ablation：DPO（beta 預設自動切成 0.1）
+  python train_prefix.py --objective dpo --lr 1e-4 ...
 """
 import argparse
+import dataclasses
 import inspect
 
 import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PrefixTuningConfig, TaskType
-from trl import DPOConfig, DPOTrainer
+from trl import CPOConfig, CPOTrainer, DPOConfig, DPOTrainer
+
+# beta 在兩個目標函數之間語意完全不同，不可互換：
+#   DPO   beta=0.1  控制與 reference model 的 KL 約束強度
+#   SimPO beta=1.5  縮放 length-normalized reward 的溫度
+# 把 DPO 的 0.1 套到 SimPO 上，訓練訊號會弱到幾乎不存在，所以預設值依 objective 決定。
+DEFAULT_BETA = {"dpo": 0.1, "simpo": 1.5}
+
+# 舊版 PEFT 沒有原生零初始化，需退回手動縮放。
+_HAS_INIT_WEIGHTS = any(f.name == "init_weights"
+                        for f in dataclasses.fields(PrefixTuningConfig))
 
 
 def build_dataset(train_file, tokenizer, use_chat_template):
@@ -45,14 +59,68 @@ def build_dataset(train_file, tokenizer, use_chat_template):
     return ds
 
 
+def build_trainer(args, beta, model, peft_cfg, tokenizer, train_ds):
+    """依 objective 選 trainer。兩條路徑共用 dataset、peft config 與 logging。"""
+    common = dict(
+        output_dir=args.output_dir,
+        per_device_train_batch_size=args.batch_size,
+        gradient_accumulation_steps=args.grad_accum,
+        learning_rate=args.lr,
+        num_train_epochs=args.epochs,
+        max_steps=args.max_steps,
+        beta=beta,
+        max_length=args.max_length,
+        max_prompt_length=args.max_prompt_length,
+        bf16=args.bf16,
+        warmup_ratio=args.warmup_ratio,
+        max_grad_norm=args.max_grad_norm,
+        lr_scheduler_type=args.lr_scheduler_type,
+        gradient_checkpointing=args.gradient_checkpointing,
+        gradient_checkpointing_kwargs=(
+            {"use_reentrant": False} if args.gradient_checkpointing else None),
+        seed=args.seed,
+        logging_steps=5,
+        save_strategy="epoch",
+        report_to=[],
+        remove_unused_columns=False,
+    )
+
+    if args.objective == "simpo":
+        # CPOTrainer 是 reference-free，不需要 ref_model，也不需要 disable_adapter 前向。
+        cfg = CPOConfig(loss_type="simpo", simpo_gamma=args.gamma,
+                        cpo_alpha=args.cpo_alpha, **common)
+        cls, kwargs = CPOTrainer, {}
+    else:
+        # 給了 peft_config + ref_model=None → TRL 用 disable_adapter 當 reference。
+        cfg = DPOConfig(loss_type=args.loss_type, **common)
+        cls, kwargs = DPOTrainer, {"ref_model": None}
+
+    kwargs.update(model=model, args=cfg, train_dataset=train_ds, peft_config=peft_cfg)
+    # TRL 版本相容：新版用 processing_class，舊版用 tokenizer
+    sig = inspect.signature(cls.__init__).parameters
+    kwargs["processing_class" if "processing_class" in sig else "tokenizer"] = tokenizer
+    return cls(**kwargs)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="codellama/CodeLlama-7b-Instruct-hf")
+    ap.add_argument("--model", default="microsoft/Phi-3-mini-4k-instruct")
     ap.add_argument("--train_file", default="data/sample_pref.jsonl")
-    ap.add_argument("--output_dir", default="outputs/codellama7b-prefix-dpo")
+    ap.add_argument("--output_dir", default="outputs/phi3-prefix-simpo")
     ap.add_argument("--num_virtual_tokens", type=int, default=16)
-    ap.add_argument("--beta", type=float, default=0.1)
-    ap.add_argument("--lr", type=float, default=1e-5)
+    # === 目標函數 ===
+    ap.add_argument("--objective", choices=["simpo", "dpo"], default="simpo",
+                    help="simpo=ProSec 論文用的（TRL CPOTrainer）；dpo=舊版，保留作 ablation")
+    ap.add_argument("--beta", type=float, default=None,
+                    help=f"不給則依 objective 自動選：{DEFAULT_BETA}。兩者語意不同，不可互換")
+    ap.add_argument("--gamma", type=float, default=0.5,
+                    help="SimPO 的 target reward margin（論文設定 0.5）。dpo 時忽略")
+    ap.add_argument("--cpo_alpha", type=float, default=0.0,
+                    help="CPO 的 SFT 項權重。**純 SimPO 必須為 0**；"
+                         "TRL 預設 1.0 會變成 CPO-SimPO 混合，不是論文的方法")
+    ap.add_argument("--loss_type", default="sigmoid",
+                    help="僅 --objective dpo 時使用：sigmoid(標準DPO) / ipo / hinge")
+    ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--epochs", type=float, default=1.0)
     ap.add_argument("--batch_size", type=int, default=1)
     ap.add_argument("--grad_accum", type=int, default=16)
@@ -61,27 +129,39 @@ def main():
     ap.add_argument("--bf16", action="store_true")
     ap.add_argument("--no_chat_template", action="store_true")
     ap.add_argument("--load_4bit", action="store_true", help="用 bitsandbytes 4-bit 載入以省顯存")
-    ap.add_argument("--loss_type", default="sigmoid",
-                    help="TRL DPO loss_type：sigmoid(標準DPO) / ipo / 等。SimPO 請見 README。")
-    # === 穩定性相關（解決 grad 爆炸 / loss 不降）===
+    # === 穩定性相關 ===
     ap.add_argument("--warmup_ratio", type=float, default=0.1,
-                    help="前期 lr 暖機比例，緩解 prefix 隨機初始化造成的初期不穩")
+                    help="前期 lr 暖機比例")
     ap.add_argument("--max_grad_norm", type=float, default=0.3,
-                    help="梯度裁剪上限。grad_norm 爆炸時調小（0.1~0.5）")
+                    help="梯度裁剪上限。注意：log 印的 grad_norm 是裁剪『前』的值，"
+                         "實測常在 8~21，代表每一步都被夾到此上限")
     ap.add_argument("--lr_scheduler_type", default="cosine",
                     help="lr 排程：cosine / linear / constant_with_warmup")
     ap.add_argument("--gradient_checkpointing", action="store_true",
                     help="省顯存（犧牲速度）。長序列 OOM 時開")
     # === 子集 / 快速迭代 ===
     ap.add_argument("--max_samples", type=int, default=None,
-                    help="只取前 N 筆訓練（做隨機/小子集過渡用；正式跑全量時不要設）")
+                    help="只取 N 筆訓練（lr sweep 等快速迭代用；正式跑全量時不要設）")
     ap.add_argument("--max_steps", type=int, default=-1,
                     help="覆寫 epochs，只跑固定步數（smoke 用，例如 20）")
     ap.add_argument("--prefix_init_scale", type=float, default=0.0,
-                    help="prefix 初始值縮放。0=全零起步(policy≈ref，仿SVEN，最穩)；"
-                         "1=PEFT 預設隨機初始化(會不穩)；可試 0.0 / 0.01")
+                    help="0=零初始化(仿SVEN，最穩，走 PEFT 原生 init_weights='zero')；"
+                         "1=PEFT 預設隨機初始化(會不穩)；其他值=隨機後手動縮放")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
+
+    beta = args.beta if args.beta is not None else DEFAULT_BETA[args.objective]
+    if args.objective == "simpo" and args.cpo_alpha > 0:
+        print(f"⚠️  cpo_alpha={args.cpo_alpha} > 0 → 這是 CPO-SimPO 混合，不是純 SimPO。"
+              "要對齊 ProSec 論文請用 --cpo_alpha 0")
+    if args.beta is not None and args.objective == "simpo" and args.beta < 0.5:
+        print(f"⚠️  SimPO 的 beta={args.beta} 偏低（論文用 1.5）。"
+              "DPO 的 beta 尺度不可直接套用到 SimPO")
+
+    print(f"objective={args.objective}  beta={beta}"
+          + (f"  gamma={args.gamma}  cpo_alpha={args.cpo_alpha}"
+             if args.objective == "simpo" else f"  loss_type={args.loss_type}")
+          + f"  lr={args.lr}  epochs={args.epochs}")
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token_id is None:
@@ -104,9 +184,14 @@ def main():
         model.enable_input_require_grads()  # PEFT + gradient checkpointing 需要
 
     # 只訓練一組 prefix —— 取代 SVEN 手刻的 prefix_params + hf/ modeling
+    zero_init = args.prefix_init_scale == 0.0
+    peft_kwargs = {}
+    if zero_init and _HAS_INIT_WEIGHTS:
+        peft_kwargs["init_weights"] = "zero"
     peft_cfg = PrefixTuningConfig(
         task_type=TaskType.CAUSAL_LM,
         num_virtual_tokens=args.num_virtual_tokens,
+        **peft_kwargs,
     )
 
     train_ds = build_dataset(args.train_file, tokenizer, not args.no_chat_template)
@@ -115,57 +200,24 @@ def main():
         print(f"取隨機子集：{args.max_samples} 筆")
     print(f"訓練資料：{len(train_ds)} 筆偏好對")
 
-    dpo_args = DPOConfig(
-        output_dir=args.output_dir,
-        per_device_train_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.grad_accum,
-        learning_rate=args.lr,
-        num_train_epochs=args.epochs,
-        max_steps=args.max_steps,
-        beta=args.beta,
-        loss_type=args.loss_type,
-        max_length=args.max_length,
-        max_prompt_length=args.max_prompt_length,
-        bf16=args.bf16,
-        warmup_ratio=args.warmup_ratio,
-        max_grad_norm=args.max_grad_norm,
-        lr_scheduler_type=args.lr_scheduler_type,
-        gradient_checkpointing=args.gradient_checkpointing,
-        gradient_checkpointing_kwargs={"use_reentrant": False} if args.gradient_checkpointing else None,
-        seed=args.seed,
-        logging_steps=5,
-        save_strategy="epoch",
-        report_to=[],
-        remove_unused_columns=False,
-    )
+    trainer = build_trainer(args, beta, model, peft_cfg, tokenizer, train_ds)
 
-    # TRL 版本相容：新版用 processing_class，舊版用 tokenizer
-    trainer_kwargs = dict(
-        model=model,
-        ref_model=None,          # 給了 peft_config + ref_model=None → TRL 用 disable_adapter 當 reference
-        args=dpo_args,
-        train_dataset=train_ds,
-        peft_config=peft_cfg,
-    )
-    sig = inspect.signature(DPOTrainer.__init__).parameters
-    if "processing_class" in sig:
-        trainer_kwargs["processing_class"] = tokenizer
-    else:
-        trainer_kwargs["tokenizer"] = tokenizer
-
-    trainer = DPOTrainer(**trainer_kwargs)
-
-    # === 縮小 prefix 初始值，讓 policy 起步 ≈ reference（仿 SVEN 的零初始化）===
-    # PEFT PrefixTuning 預設隨機初始化，會讓 policy 從第 0 步就大幅偏離 base，
-    # 造成 reward 量級爆炸 / loss 不收斂。scale=0 → 全零起步；可試 0.0 / 0.01。
-    if args.prefix_init_scale != 1.0:
+    # === prefix 初始值 ===
+    # PEFT 預設隨機初始化，會讓 policy 從第 0 步就大幅偏離 base，造成 reward 量級爆炸。
+    # 零初始化 → policy 起步 ≈ base（仿 SVEN）。優先用 PEFT 原生 init_weights，
+    # 舊版 PEFT 或需要中間值（如 0.01）時才退回手動縮放。
+    if zero_init and _HAS_INIT_WEIGHTS:
+        print("prefix 初始化：PEFT 原生 init_weights='zero'")
+    elif args.prefix_init_scale != 1.0:
         n_scaled = 0
         with torch.no_grad():
             for n, p in trainer.model.named_parameters():
                 if p.requires_grad:  # 只有 prefix 參數可訓練
                     p.mul_(args.prefix_init_scale)
                     n_scaled += p.numel()
-        print(f"prefix 初始值縮放 ×{args.prefix_init_scale}（{n_scaled} 個參數）")
+        print(f"prefix 初始值手動縮放 ×{args.prefix_init_scale}（{n_scaled} 個參數）")
+    else:
+        print("prefix 初始化：PEFT 預設隨機（不穩，僅供 ablation）")
 
     trainer.train()
     trainer.save_model(args.output_dir)

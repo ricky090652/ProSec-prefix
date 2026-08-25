@@ -62,6 +62,8 @@ def summarize(path):
         return None
     out = {
         "name": os.path.basename(path).replace(".log", ""),
+        # CPOTrainer(SimPO) 的 log 多一個 nll_loss 欄位，DPOTrainer 沒有 → 用來自動辨識
+        "objective": "simpo" if any("nll_loss" in r for r in records) else "dpo",
         "n_logs": len(records),
         "runtime": summary.get("train_runtime"),
         "peak_lr": max((r.get("learning_rate", 0) for r in records), default=0),
@@ -91,6 +93,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("logs", nargs="+", help="train_prefix.py 的 stdout log 檔")
     ap.add_argument("--csv_dir", default=None, help="把每個 run 的曲線另存成 csv")
+    ap.add_argument("--collapse_ratio", type=float, default=2.5,
+                    help="chosen reward 絕對值從 early 到 late 放大超過此倍數 → 判定崩潰")
+    ap.add_argument("--flat_rel", type=float, default=0.10,
+                    help="Δ 小於 early 絕對值的此比例 → 視為沒動（尺度無關）")
+    ap.add_argument("--flat_abs", type=float, default=0.05,
+                    help="flat 判定的絕對下限，避免 early 接近 0 時失效")
     args = ap.parse_args()
 
     runs = [s for s in (summarize(p) for p in args.logs) if s]
@@ -110,6 +118,7 @@ def main():
     def row(label, fn, spec="{:.4f}"):
         print(f"{label:<18}" + "".join(f"{fmt(fn(r), spec):>{W}}" for r in runs))
 
+    print(f"{'objective':<18}" + "".join(f"{r['objective']:>{W}}" for r in runs))
     row("peak lr", lambda r: r["peak_lr"], "{:.1e}")
     row("logged steps", lambda r: r["n_logs"], "{:.0f}")
     print("-" * len(hdr))
@@ -135,34 +144,79 @@ def main():
     print("\n" + "=" * 66)
     print("【判讀】")
     print("=" * 66)
+    n_underfit = n_collapse = 0
     for r in runs:
         dc, dr = delta(r, "rewards/chosen"), delta(r, "rewards/rejected")
-        notes = []
+        cl, rl = r["rewards/chosen.late"], r["rewards/rejected.late"]
+        notes, state = [], None
         if r["nan"]:
             notes.append("❌ loss 出現 NaN，此設定不可用")
-        if r["grad_max"] is not None and r["grad_max"] > 50:
-            notes.append(f"⚠️  grad_norm 峰值 {r['grad_max']:.0f} > 50，步長過大")
-        if dc is not None and dr is not None:
+
+        # 診斷順序很重要：先判 reward 崩潰，再判 underfit。
+        # 兩者的 Δ 符號可能相同（都是 chosen 下降），但成因與處置完全相反——
+        # 崩潰是步長過大讓 policy 跑掉，underfit 是根本沒在學。
+        #
+        # 門檻一律用「相對於該 run 自身 reward 尺度」的比值，不用絕對值：
+        # DPO 的 reward 是未歸一化的 log-ratio（實測起點約 -1.5），
+        # SimPO 是 beta x 每 token 平均 log-prob（實測起點約 -10），兩者差一個量級。
+        ce, re_ = r["rewards/chosen.early"], r["rewards/rejected.early"]
+
+        def is_flat(d, early):
+            if d is None or early is None:
+                return False
+            return abs(d) < max(args.flat_abs, args.flat_rel * abs(early))
+
+        grew = (abs(cl) / abs(ce)) if (cl is not None and ce not in (None, 0)) else None
+        if grew is not None and grew > args.collapse_ratio:
+            state = "collapse"
+            n_collapse += 1
+            notes.append(f"❌ reward 崩潰：chosen 從 {ce:.2f} 掉到 {cl:.2f}"
+                         f"（放大 {grew:.1f}x，門檻 {args.collapse_ratio}x）。"
+                         "連安全碼的機率都被壓垮，不是「學得更好」")
+        elif is_flat(dc, ce) and is_flat(dr, re_):
+            state = "underfit"
+            n_underfit += 1
+            notes.append(f"⚠️  兩側相對自身尺度都幾乎沒動"
+                         f"（chosen {dc:+.3f}、rejected {dr:+.3f}）→ underfit")
+        elif dc is not None and dr is not None:
             if dc > 0 and dr < 0:
+                state = "healthy"
                 notes.append("✅ margin 由雙邊貢獻（chosen 上升、rejected 下降）")
             elif dc <= 0 and dr < 0:
-                notes.append("⚠️  只有 rejected 單邊下降，chosen 未上升 → underfit 徵狀")
+                notes.append("⚠️  chosen 下降、rejected 下降更多 → 偏向壓低機率而非學會安全寫法")
             elif dc > 0 and dr >= 0:
                 notes.append("⚠️  chosen 上升但 rejected 未下降")
             else:
                 notes.append("❌ 兩側都往錯誤方向移動")
+
+        if r["grad_max"] is not None and r["grad_max"] > 50:
+            notes.append(f"⚠️  grad_norm 峰值 {r['grad_max']:.0f} > 50（注意這是裁剪前的值）")
+
         acc = r["rewards/accuracies.late"]
         if acc is not None:
-            notes.append(f"{'✅' if acc > 0.75 else '⚠️ '} accuracies 收斂到 {acc:.3f}"
-                         f"{'' if acc > 0.75 else '（目標 > 0.75）'}")
+            if state == "collapse":
+                # accuracies 只看 margin 的正負號。兩側一起崩、只是速度不同時，
+                # 它會逼近 1.0 卻毫無意義，不能拿來當「訓練成功」的證據。
+                notes.append(f"⚠️  accuracies {acc:.3f} 在 reward 崩潰下不具參考價值")
+            else:
+                notes.append(f"{'✅' if acc > 0.75 else '⚠️ '} accuracies 收斂到 {acc:.3f}"
+                             f"{'' if acc > 0.75 else '（目標 > 0.75）'}")
         print(f"\n{r['name']}（lr={r['peak_lr']:.1e}）")
         for n in notes:
             print(f"  {n}")
 
     print("\n" + "-" * 66)
-    print("若四組都是「只有 rejected 單邊下降」→ 不是 lr 問題，走 §8.3 停損點：")
-    print("  先試 num_virtual_tokens 16 → 40 → 64，再考慮 prefix_projection。")
-    print("挑出最好的 2 組後，務必再跑一次小規模安全評測確認有反映到真實生成上。")
+    if n_underfit == len(runs):
+        print("全部 underfit → 不是 lr 問題，走 §8.3 停損點：")
+        print("  先試 num_virtual_tokens 16 → 40 → 64，再考慮 prefix_projection。")
+    elif n_collapse and n_underfit:
+        print("低 lr underfit、高 lr reward 崩潰 → 可用區間夾在兩者之間。")
+        print("  挑落在中間、且 margin 由雙邊貢獻的那組。")
+    print("訓練曲線好看不等於生成有進步：挑出最好的 2 組後，")
+    print("務必跑小規模安全評測 + check_degeneration.py 確認。")
+    if any(r["objective"] != runs[0]["objective"] for r in runs):
+        print("⚠️  這批 log 混了不同 objective，reward 不可跨組直接比大小，"
+              "只能比「形狀」（是否雙邊貢獻）。")
 
     if args.csv_dir:
         os.makedirs(args.csv_dir, exist_ok=True)

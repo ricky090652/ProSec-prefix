@@ -6,8 +6,8 @@
 > **使用方式**：跑完一項就把結果貼回對話，Claude 會勾掉對應項目、填入數字、
 > 並依停損點判斷下一步。不要自己改結構，直接貼結果即可。
 
-**目前進度**：L0 診斷層 · 0 / 2 完成
-**上次更新**：2026-08-25（建立）
+**目前進度**：S0 完成 · S1 程式碼就緒，待跑 lr 確認 · S0.5 未開始
+**上次更新**：2026-08-26（S1 程式碼完成）
 
 ---
 
@@ -26,17 +26,36 @@
 ### S0 · Prefix 學習率校準
 指令：`bash run_lr_sweep.sh` ｜ 判讀：`python eval/compare_lr_sweep.py outputs/lr_sweep/*.log`
 
-- [ ] **S0-a** lr = 2e-5（現況對照下界）
-- [ ] **S0-b** lr = 1e-4
-- [ ] **S0-c** lr = 1e-3
-- [ ] **S0-d** lr = 5e-3
-- [ ] **S0-e** 最佳 2 組跑小規模安全評測（`--limit 100 --num_gen 5`）確認有反映到生成
-- [ ] **S0-結論** 決定後續所有 Prefix 實驗採用的 lr
+- [x] **S0-a** lr = 2e-5（現況對照下界）→ **underfit 確認**
+- [x] **S0-b** lr = 1e-4 → **唯一健康的一組**
+- [x] **S0-c** lr = 1e-3 → chosen 反向崩到 −4.33，grad 峰值 2498
+- [x] **S0-d** lr = 5e-3 → reward 崩潰（chosen −24.08）
+- [x] **S0-結論** 診斷目的達成：Exp1 的 2e-5 確認 underfit，H1 未被推翻，繼續主線
+- [ ] **S0-e** 小規模安全評測 + `check_degeneration.py`（改到 S1 的 lr 定案後一起做）
+- [~] ~~**S0-f** lr = 3e-4（DPO）~~ → **延後到 S3 的 E2-dpo**。主線用 SimPO，
+      再細調 DPO 的 lr 對 S1/S2 沒有幫助；E2-dpo ablation 需要時再跑（同等搜尋預算原則）
 
 > 通過標準：`rewards/chosen` 不再單調下降、margin 由雙邊貢獻、`grad_norm` 全程 < 50。
 > **停損點**：若四組都只有 rejected 單邊下降 → 不是 lr 問題，改試 `nvt` 16 → 40 → 64。
 
-**結果**：_（待填）_
+**結果**（2026-08-25，DPO β=0.1、nvt=16、zero-init、4,000 筆子集、各約 13 分鐘）：
+
+| lr | chosen Δ | rejected Δ | margins | acc | grad max | 判讀 |
+|---|---|---|---|---|---|---|
+| 2e-5 | +0.076 | +0.016 | 0.27 | 0.607 | 18 | **underfit**——兩側幾乎沒動 |
+| 1e-4 | +0.035 | −0.401 | 0.72 | 0.735 | 21 | **唯一雙邊貢獻**，穩定 |
+| 1e-3 | −2.833 | −6.294 | 4.29 | 0.934 | **2498** | chosen 反向崩，只是 rejected 崩更快 |
+| 5e-3 | −21.910 | −34.188 | 14.35 | 0.975 | 26 | **reward 崩潰**，chosen 掉到 −24 |
+
+**結論**：
+1. **Exp1 用的 2e-5 確認是 underfit**（acc 0.607，兩側 Δ < 0.08）。這解釋了為什麼 Exp1 的
+   安全性改善只有論文的三分之一——prefix 根本沒被訓練起來。
+2. 但**可用區間比文獻窄得多**。文獻的 1e-3~1e-2 是 supervised fine-tuning 的量級；
+   偏好學習（尤其 DPO）脆弱得多，1e-3 以上就 reward 崩潰。
+3. 高 acc 具有欺騙性：5e-3 的 acc 0.975 是兩側一起崩、只是速度不同造成的，毫無意義。
+4. 停損點**未觸發**（不是全部 underfit），繼續走主線。
+
+**待確認**：1e-4 的 acc 0.735 仍低於 0.75 目標，最佳點可能落在 2e-4~5e-4 之間 → 補跑 S0-f。
 
 ---
 
@@ -58,13 +77,20 @@
 
 ### S1 · DPO → SimPO 目標函數切換
 
-- [ ] **S1-code** `train_prefix.py` 加 `--objective {dpo,simpo}`（SimPO 走 `CPOTrainer`）
-- [ ] **S1-code** 加 `--gamma`；`--prefix_init_scale` 改用 PEFT 原生 `init_weights="zero"`
-- [ ] **S1-run** SimPO + Prefix 全量訓練（β=1.5、γ=0.5、lr 用 S0 結果、epochs=1）
+- [x] **S1-code** `train_prefix.py` 加 `--objective {dpo,simpo}`（SimPO 走 `CPOTrainer`）
+- [x] **S1-code** 加 `--gamma`、`--cpo_alpha`；`--beta` 改為依 objective 自動取預設
+- [x] **S1-code** `--prefix_init_scale 0` 改走 PEFT 原生 `init_weights="zero"`
+- [x] **S1-code** `compare_lr_sweep.py` 判讀門檻改為尺度無關 + 自動辨識 objective
+- [x] **S1-code** `run_lr_sweep.sh` 加 `OBJECTIVE` 參數
+- [ ] **S1-lr** SimPO lr 確認：`bash run_lr_sweep.sh`（1e-4 / 3e-4 / 1e-3，約 40 分）
+- [ ] **S1-run** SimPO + Prefix 全量訓練（β=1.5、γ=0.5、lr 用 S1-lr 結果、epochs=1）
 - [ ] **S1-eval** 安全評測 + HumanEval + 退化守門
 
 > 通過標準：訓練穩定、`rewards/accuracies` > 0.75、通過退化守門。
 > 陷阱：β 在 DPO 與 SimPO 之間不可換算，第一輪嚴格用論文的 1.5 / 0.5。
+> **已驗證的陷阱**：TRL 的 `cpo_alpha` 預設 1.0 會變成 CPO-SimPO 混合，
+> 純 SimPO 必須設 0（`train_prefix.py` 已把預設改為 0，並在非 0 時警告）。
+> SimPO 的 reward 尺度與 DPO 差一個量級（實測起點 −10 vs −1.5），不可跨 objective 比大小。
 
 **結果**：_（待填）_
 
