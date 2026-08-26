@@ -6,8 +6,8 @@
 > **使用方式**：跑完一項就把結果貼回對話，Claude 會勾掉對應項目、填入數字、
 > 並依停損點判斷下一步。不要自己改結構，直接貼結果即可。
 
-**目前進度**：S0 完成 · S1 第一輪失敗（超參數未對齊論文）· 待用論文設定重跑
-**上次更新**：2026-08-26（核對 ProSec Appendix C 後修正 S1 設定）
+**目前進度**：S0 完成 · **S1 訓練健康、margin 隨 lr 單調成長**，待往上探 lr + 跑安全評測
+**上次更新**：2026-08-26（S1-lr2 結果：對齊論文設定後訓練正常）
 
 ---
 
@@ -84,7 +84,9 @@
 - [x] **S1-code** `run_lr_sweep.sh` 加 `OBJECTIVE` 參數
 - [x] **S1-lr** SimPO lr 確認（1e-4 / 3e-4 / 1e-3）→ **三組全部失敗，問題不在 lr**
 - [x] **S1-verify** 核對 ProSec Appendix C Table 6 → **找到三處設定不符，見下**
-- [ ] **S1-lr2** 用論文設定重掃：lr {5e-6, 2e-5, 5e-5}、effective batch **64**（約 1.8 小時）
+- [x] **S1-lr2** 論文設定重掃 lr {5e-6, 2e-5, 5e-5} @ batch 64 → **三組都健康，未達上限**
+- [ ] **S1-lr3** 往上再探一級：lr {1e-4, 2e-4} @ batch 64（約 70 分）
+- [ ] **S0-e** 對現有 `lr_5e-5` adapter 跑小規模安全評測 + 退化守門（約 30 分，可與上一項排隊）
 - [ ] **S1-loc** 跑 `data/edit_locality.py`（CPU，可與 S1-lr2 並行；S5 前置）
 - [ ] **S1-run** SimPO + Prefix 全量訓練（β=1.5、γ=0.5、lr 用 S1-lr 結果、epochs=1）
 - [ ] **S1-eval** 安全評測 + HumanEval + 退化守門
@@ -123,7 +125,25 @@
 > steps** 計量（1500 steps @ batch 64 ≈ 9.6 epochs over ~10k）。Exp2 真正的問題是它跑了
 > 5,722 個 step，是論文的 3.8 倍。**之後一律用 optimizer steps @ batch 64 描述訓練量。**
 
-**以下為第一輪的原始分析（保留供參考）：**
+**S1-lr2 結果**（對齊論文設定：effective batch 64、16,000 筆 = 250 optimizer steps）：
+
+| lr | margins early → late | **margin 成長** | accuracies early → late | grad late |
+|---|---|---|---|---|
+| 5e-6 | 0.0366 → 0.0421 | **+15.0%** | 0.398 → 0.403 | 2.8 |
+| 2e-5 | 0.0376 → 0.0494 | **+31.4%** | 0.400 → 0.408 | 7.0 |
+| 5e-5 | 0.0389 → 0.0632 | **+62.5%** | 0.402 → 0.422 | 26.2 |
+
+**訓練是健康的。** margin 隨 lr 單調成長、沒有飽和、沒有不穩定跡象（lr 每升一級，
+Δmargin 約 ×2.1）。effective batch 從 16 改成 64 是關鍵——同樣的 lr 在 batch 16 下
+會讓 margin 縮小，在 batch 64 下則穩定成長。
+
+**accuracies < 0.5 不是失敗訊號。** 起點就是 0.398——這是**資料與 base model 的性質**：
+ProSec 的 `y_f` 是在「已看過漏洞碼 + 分析器回饋」的條件下生成的（論文 §3.2：
+`y_f ~ π(y|x_v, y_v, l, c)`），而 `y_v` 是直接從 `x_v` 取樣的。所以在只給 `x_v` 的條件下
+評分，`y_v` 天生機率較高。要看的是趨勢（三組都在往上），不是絕對值。
+論文自始至終沒有回報 preference accuracy，最終指標是 vulnerable code ratio。
+
+**以下為第一輪（batch 16、lr 過高）的原始分析，保留供參考：**
 TRL 的 SimPO 目標 margin = γ/β = 0.5/1.5 = **0.333 nats/token**。已用觀測值驗證 loss 模型
 （預測 0.9364 vs 實測 0.943~0.945）。要把 loss 壓到 0.5 需要 margin 0.622 nats/token，
 即 chosen 每個 token 的機率是 rejected 的 1.86 倍、且要撐過整個序列。

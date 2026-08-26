@@ -18,5 +18,5 @@ data/*.jsonl
 # 雜項
 .DS_Store
 *.log
-
+*.html
 prefix_implementation.md

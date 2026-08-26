@@ -97,8 +97,8 @@ def main():
                     help="崩潰判定的最小絕對變動量，避免小尺度 reward 被比值誤判")
     ap.add_argument("--collapse_ratio", type=float, default=2.5,
                     help="chosen reward 絕對值從 early 到 late 放大超過此倍數 → 判定崩潰")
-    ap.add_argument("--flat_rel", type=float, default=0.10,
-                    help="Δ 小於 early 絕對值的此比例 → 視為沒動（尺度無關）")
+    ap.add_argument("--flat_rel", type=float, default=0.05,
+                    help="margin 相對成長低於此比例 → 視為 underfit（尺度無關）")
     ap.add_argument("--flat_abs", type=float, default=0.05,
                     help="flat 判定的絕對下限，避免 early 接近 0 時失效")
     args = ap.parse_args()
@@ -139,6 +139,10 @@ def main():
     row("margins early", lambda r: r["rewards/margins.early"])
     row("margins late", lambda r: r["rewards/margins.late"])
     row("margins Δ ↑好", lambda r: delta(r, "rewards/margins"), "{:+.4f}")
+    row("margin 成長 %", lambda r: (100 * delta(r, "rewards/margins")
+                                    / abs(r["rewards/margins.early"])
+                                    if r["rewards/margins.early"] else None), "{:+.1f}")
+    row("accuracies early", lambda r: r["rewards/accuracies.early"])
     row("accuracies late", lambda r: r["rewards/accuracies.late"])
     print("-" * len(hdr))
     row("grad_norm late", lambda r: r["grad_norm.late"], "{:.2f}")
@@ -160,13 +164,20 @@ def main():
         # 這兩項比 chosen/rejected 各自的走向更根本——兩側怎麼移動都好，
         # 只要 margin 沒擴大，就代表模型沒學到「哪一個比較好」。
         dm = delta(r, "rewards/margins")
-        acc = r["rewards/accuracies.late"]
+        acc, acc_e = r["rewards/accuracies.late"], r["rewards/accuracies.early"]
         if dm is not None and dm <= 0:
             notes.append(f"❌ margin 沒有擴大（Δ {dm:+.4f}）→ 模型沒學到排序，"
                          "這不是訓練不足，是訓練訊號本身有問題")
+        # accuracies < 0.5 本身不必然是壞事：若起點就 < 0.5，那是資料與 base model
+        # 的性質（ProSec 的 y_f 是在「看過漏洞碼與分析器回饋」的條件下生成的，
+        # 對 x_v 而言本來就偏 off-policy），要看的是它有沒有在往上走。
         if acc is not None and acc < 0.5:
-            notes.append(f"❌ accuracies {acc:.3f} < 0.5：模型把 rejected 排在 chosen 前面，"
-                         "比隨機猜還差")
+            if acc_e is not None and acc_e < 0.5:
+                arrow = "↑ 改善中" if acc > acc_e else "↓ 惡化"
+                notes.append(f"ℹ️  accuracies {acc_e:.3f} → {acc:.3f}（{arrow}）。"
+                             "起點就 < 0.5 是資料性質，非訓練失敗；看趨勢不看絕對值")
+            else:
+                notes.append(f"❌ accuracies 由 {acc_e:.3f} 掉到 {acc:.3f} < 0.5：訓練讓排序變差")
 
         # 診斷順序很重要：先判 reward 崩潰，再判 underfit。
         # 兩者的 Δ 符號可能相同（都是 chosen 下降），但成因與處置完全相反——
@@ -176,11 +187,12 @@ def main():
         # DPO 的 reward 是未歸一化的 log-ratio（實測起點約 -1.5），
         # SimPO 是 beta x 每 token 平均 log-prob（實測起點約 -10），兩者差一個量級。
         ce, re_ = r["rewards/chosen.early"], r["rewards/rejected.early"]
-
-        def is_flat(d, early):
-            if d is None or early is None:
-                return False
-            return abs(d) < max(args.flat_abs, args.flat_rel * abs(early))
+        me = r["rewards/margins.early"]
+        # margin 的相對成長 = (late - early) / |early|。
+        # 這是唯一能跨 objective 比較的「有沒有在學」指標：
+        # chosen / rejected 各自的絕對位移會隨損失函數與資料尺度大幅改變，
+        # 但「兩者的差距相對於起點擴大了幾成」在哪裡都是同一件事。
+        mgrow = (dm / abs(me)) if (dm is not None and me not in (None, 0)) else None
 
         # 崩潰必須同時滿足「相對放大」與「絕對變動夠大」。只看比值會誤判——
         # SimPO 的 reward 起點本來就小（β x 每 token 平均 log-prob，約 -0.5），
@@ -193,11 +205,11 @@ def main():
             notes.append(f"❌ reward 崩潰：chosen 從 {ce:.2f} 掉到 {cl:.2f}"
                          f"（放大 {grew:.1f}x 且變動 {dc:+.2f}）。"
                          "連安全碼的機率都被壓垮，不是「學得更好」")
-        elif is_flat(dc, ce) and is_flat(dr, re_):
+        elif mgrow is not None and mgrow < args.flat_rel:
             state = "underfit"
             n_underfit += 1
-            notes.append(f"⚠️  兩側相對自身尺度都幾乎沒動"
-                         f"（chosen {dc:+.3f}、rejected {dr:+.3f}）→ underfit")
+            notes.append(f"⚠️  margin 相對成長僅 {100*mgrow:.1f}%"
+                         f"（門檻 {100*args.flat_rel:.0f}%）→ underfit")
         elif dc is not None and dr is not None:
             if dc > 0 and dr < 0:
                 state = "healthy"
@@ -226,8 +238,13 @@ def main():
 
     print("\n" + "-" * 66)
     if n_underfit == len(runs):
-        print("全部 underfit → 不是 lr 問題，走 §8.3 停損點：")
+        print("全部 underfit（margin 幾乎沒成長）→ 才走 §8.3 停損點：")
         print("  先試 num_virtual_tokens 16 → 40 → 64，再考慮 prefix_projection。")
+    elif all(delta(r, "rewards/margins") or 0 > 0 for r in runs):
+        best = max(runs, key=lambda r: delta(r, "rewards/margins") or 0)
+        print(f"margin 全部在成長，最快的是 {best['name']}"
+              f"（lr={best['peak_lr']:.1e}）。若成長隨 lr 單調上升且未見不穩，"
+              "代表還沒到上限，可以再往上探一級。")
     elif n_collapse and n_underfit:
         print("低 lr underfit、高 lr reward 崩潰 → 可用區間夾在兩者之間。")
         print("  挑落在中間、且 margin 由雙邊貢獻的那組。")
