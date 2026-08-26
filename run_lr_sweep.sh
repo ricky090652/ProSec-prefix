@@ -15,9 +15,16 @@ MODEL="${MODEL:-microsoft/Phi-3-mini-4k-instruct}"
 TRAIN_FILE="${TRAIN_FILE:-data/train_pref.jsonl}"
 OBJECTIVE="${OBJECTIVE:-simpo}"
 OUT_DIR="${OUT_DIR:-outputs/lr_sweep_${OBJECTIVE}}"
-# SimPO 的 reward 除以 |y|，裁剪前梯度天生比 DPO 小，最佳點可能偏高一點。
-LRS="${LRS:-1e-4 3e-4 1e-3}"
-MAX_SAMPLES="${MAX_SAMPLES:-4000}"
+# ProSec 論文 Appendix C Table 6：SimPO lr=5e-6, beta=1.5, gamma=0.5,
+# 總 batch 64, Phi3-mini 跑 1500 steps。論文的 5e-6 是 LoRA 的值；
+# Prefix 通常需要略高，所以由 5e-6 往上包住一段。
+LRS="${LRS:-5e-6 2e-5 5e-5}"
+# 論文的 effective batch 是 64。SimPO 的 margin 訊號在高相似度 pair 上很弱，
+# batch 太小會被梯度雜訊淹掉，所以這裡對齊論文而不是沿用 S0 的 16。
+BATCH="${BATCH:-1}"
+GRAD_ACCUM="${GRAD_ACCUM:-64}"
+# 16000 筆 / effective batch 64 = 250 個 optimizer step，夠看出趨勢。
+MAX_SAMPLES="${MAX_SAMPLES:-16000}"
 SEED="${SEED:-42}"
 
 if [[ ! -f "$TRAIN_FILE" ]]; then
@@ -29,7 +36,7 @@ if [[ ! -f "$TRAIN_FILE" ]]; then
 fi
 
 mkdir -p "$OUT_DIR"
-echo "objective：$OBJECTIVE"
+echo "objective：$OBJECTIVE   effective batch：$((BATCH * GRAD_ACCUM))"
 echo "資料：$TRAIN_FILE（$(wc -l < "$TRAIN_FILE") 筆，取子集 $MAX_SAMPLES / seed $SEED）"
 echo "掃描 lr：$LRS"
 echo
@@ -49,7 +56,7 @@ for LR in $LRS; do
     --num_virtual_tokens 16 \
     --prefix_init_scale 0 \
     --objective "$OBJECTIVE" --epochs 1 --lr "$LR" \
-    --batch_size 1 --grad_accum 16 --bf16 \
+    --batch_size "$BATCH" --grad_accum "$GRAD_ACCUM" --bf16 \
     2>&1 | tee "$LOG"
   echo
 done

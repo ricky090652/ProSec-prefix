@@ -6,8 +6,8 @@
 > **使用方式**：跑完一項就把結果貼回對話，Claude 會勾掉對應項目、填入數字、
 > 並依停損點判斷下一步。不要自己改結構，直接貼結果即可。
 
-**目前進度**：S0 完成 · **S1 卡住：SimPO 的 γ 疑似結構上不可達** · 待跑 edit-locality 診斷
-**上次更新**：2026-08-26（S1 lr sweep 結果 + 診斷）
+**目前進度**：S0 完成 · S1 第一輪失敗（超參數未對齊論文）· 待用論文設定重跑
+**上次更新**：2026-08-26（核對 ProSec Appendix C 後修正 S1 設定）
 
 ---
 
@@ -83,9 +83,9 @@
 - [x] **S1-code** `compare_lr_sweep.py` 判讀門檻改為尺度無關 + 自動辨識 objective
 - [x] **S1-code** `run_lr_sweep.sh` 加 `OBJECTIVE` 參數
 - [x] **S1-lr** SimPO lr 確認（1e-4 / 3e-4 / 1e-3）→ **三組全部失敗，問題不在 lr**
-- [ ] **S1-loc** 跑 `data/edit_locality.py` 量測 edit ratio，推算 γ 的可達上限（CPU，約 10 分）
-- [ ] **S1-gamma** 依 S1-loc 的結果掃 γ（含 γ=0 作為下界）
-- [ ] **S1-verify** 對照 ProSec 論文原文，確認 β=1.5 / γ=0.5 的出處與參數化方式
+- [x] **S1-verify** 核對 ProSec Appendix C Table 6 → **找到三處設定不符，見下**
+- [ ] **S1-lr2** 用論文設定重掃：lr {5e-6, 2e-5, 5e-5}、effective batch **64**（約 1.8 小時）
+- [ ] **S1-loc** 跑 `data/edit_locality.py`（CPU，可與 S1-lr2 並行；S5 前置）
 - [ ] **S1-run** SimPO + Prefix 全量訓練（β=1.5、γ=0.5、lr 用 S1-lr 結果、epochs=1）
 - [ ] **S1-eval** 安全評測 + HumanEval + 退化守門
 
@@ -106,7 +106,24 @@
 **三組的 accuracies 都 < 0.51**，代表模型把 rejected 排在 chosen 前面的次數不比隨機少。
 這不是 underfit（DPO 在同樣預算下 accuracies 到 0.61~0.93），是**訓練訊號本身有問題**。
 
-**主要假設：γ 在這份資料上結構性不可達。**
+**原假設已被論文推翻**：γ 不是結構上不可達——論文用完全相同的 β=1.5 / γ=0.5
+拿到 Vul 25.39（base 40.76）。正確的結論是「margin 訊號弱 → 對步長極度敏感」。
+
+**真正的原因：三處超參數沒對齊論文（Appendix C, Table 6）。**
+
+| | 論文 | 我們第一輪 | 差距 |
+|---|---|---|---|
+| lr | **5e-6** | 1e-4 ~ 1e-3 | 高 20~200 倍 |
+| effective batch | **64** | 16 | 梯度雜訊大 2 倍 |
+| 訓練量單位 | **1500 optimizer steps** @ batch 64 | 250 steps @ batch 16 | — |
+
+論文的 lr=5e-6 是 LoRA 的值，Prefix 通常需要略高，所以重掃範圍由 5e-6 往上包住一段。
+
+> 附帶修正一條先前的規則：「epochs 固定為 1」是從 Exp2 過度推論的。論文用 **optimizer
+> steps** 計量（1500 steps @ batch 64 ≈ 9.6 epochs over ~10k）。Exp2 真正的問題是它跑了
+> 5,722 個 step，是論文的 3.8 倍。**之後一律用 optimizer steps @ batch 64 描述訓練量。**
+
+**以下為第一輪的原始分析（保留供參考）：**
 TRL 的 SimPO 目標 margin = γ/β = 0.5/1.5 = **0.333 nats/token**。已用觀測值驗證 loss 模型
 （預測 0.9364 vs 實測 0.943~0.945）。要把 loss 壓到 0.5 需要 margin 0.622 nats/token，
 即 chosen 每個 token 的機率是 rejected 的 1.86 倍、且要撐過整個序列。
