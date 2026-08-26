@@ -93,6 +93,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("logs", nargs="+", help="train_prefix.py 的 stdout log 檔")
     ap.add_argument("--csv_dir", default=None, help="把每個 run 的曲線另存成 csv")
+    ap.add_argument("--collapse_min_abs", type=float, default=1.0,
+                    help="崩潰判定的最小絕對變動量，避免小尺度 reward 被比值誤判")
     ap.add_argument("--collapse_ratio", type=float, default=2.5,
                     help="chosen reward 絕對值從 early 到 late 放大超過此倍數 → 判定崩潰")
     ap.add_argument("--flat_rel", type=float, default=0.10,
@@ -134,7 +136,9 @@ def main():
     row("rejected late", lambda r: r["rewards/rejected.late"])
     row("rejected Δ ↓好", lambda r: delta(r, "rewards/rejected"), "{:+.4f}")
     print("-" * len(hdr))
+    row("margins early", lambda r: r["rewards/margins.early"])
     row("margins late", lambda r: r["rewards/margins.late"])
+    row("margins Δ ↑好", lambda r: delta(r, "rewards/margins"), "{:+.4f}")
     row("accuracies late", lambda r: r["rewards/accuracies.late"])
     print("-" * len(hdr))
     row("grad_norm late", lambda r: r["grad_norm.late"], "{:.2f}")
@@ -152,6 +156,18 @@ def main():
         if r["nan"]:
             notes.append("❌ loss 出現 NaN，此設定不可用")
 
+        # 偏好學習唯一真正要問的問題：margin 有沒有變大、排序有沒有變準。
+        # 這兩項比 chosen/rejected 各自的走向更根本——兩側怎麼移動都好，
+        # 只要 margin 沒擴大，就代表模型沒學到「哪一個比較好」。
+        dm = delta(r, "rewards/margins")
+        acc = r["rewards/accuracies.late"]
+        if dm is not None and dm <= 0:
+            notes.append(f"❌ margin 沒有擴大（Δ {dm:+.4f}）→ 模型沒學到排序，"
+                         "這不是訓練不足，是訓練訊號本身有問題")
+        if acc is not None and acc < 0.5:
+            notes.append(f"❌ accuracies {acc:.3f} < 0.5：模型把 rejected 排在 chosen 前面，"
+                         "比隨機猜還差")
+
         # 診斷順序很重要：先判 reward 崩潰，再判 underfit。
         # 兩者的 Δ 符號可能相同（都是 chosen 下降），但成因與處置完全相反——
         # 崩潰是步長過大讓 policy 跑掉，underfit 是根本沒在學。
@@ -166,12 +182,16 @@ def main():
                 return False
             return abs(d) < max(args.flat_abs, args.flat_rel * abs(early))
 
+        # 崩潰必須同時滿足「相對放大」與「絕對變動夠大」。只看比值會誤判——
+        # SimPO 的 reward 起點本來就小（β x 每 token 平均 log-prob，約 -0.5），
+        # 從 -0.5 掉到 -1.3 是 2.6x 但每 token 機率仍有 ~41%，完全正常。
         grew = (abs(cl) / abs(ce)) if (cl is not None and ce not in (None, 0)) else None
-        if grew is not None and grew > args.collapse_ratio:
+        if (grew is not None and grew > args.collapse_ratio
+                and dc is not None and abs(dc) > args.collapse_min_abs):
             state = "collapse"
             n_collapse += 1
             notes.append(f"❌ reward 崩潰：chosen 從 {ce:.2f} 掉到 {cl:.2f}"
-                         f"（放大 {grew:.1f}x，門檻 {args.collapse_ratio}x）。"
+                         f"（放大 {grew:.1f}x 且變動 {dc:+.2f}）。"
                          "連安全碼的機率都被壓垮，不是「學得更好」")
         elif is_flat(dc, ce) and is_flat(dr, re_):
             state = "underfit"
@@ -192,8 +212,7 @@ def main():
         if r["grad_max"] is not None and r["grad_max"] > 50:
             notes.append(f"⚠️  grad_norm 峰值 {r['grad_max']:.0f} > 50（注意這是裁剪前的值）")
 
-        acc = r["rewards/accuracies.late"]
-        if acc is not None:
+        if acc is not None and acc >= 0.5:
             if state == "collapse":
                 # accuracies 只看 margin 的正負號。兩側一起崩、只是速度不同時，
                 # 它會逼近 1.0 卻毫無意義，不能拿來當「訓練成功」的證據。

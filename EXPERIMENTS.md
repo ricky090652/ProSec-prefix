@@ -6,8 +6,8 @@
 > **使用方式**：跑完一項就把結果貼回對話，Claude 會勾掉對應項目、填入數字、
 > 並依停損點判斷下一步。不要自己改結構，直接貼結果即可。
 
-**目前進度**：S0 完成 · S1 程式碼就緒，待跑 lr 確認 · S0.5 未開始
-**上次更新**：2026-08-26（S1 程式碼完成）
+**目前進度**：S0 完成 · **S1 卡住：SimPO 的 γ 疑似結構上不可達** · 待跑 edit-locality 診斷
+**上次更新**：2026-08-26（S1 lr sweep 結果 + 診斷）
 
 ---
 
@@ -82,7 +82,10 @@
 - [x] **S1-code** `--prefix_init_scale 0` 改走 PEFT 原生 `init_weights="zero"`
 - [x] **S1-code** `compare_lr_sweep.py` 判讀門檻改為尺度無關 + 自動辨識 objective
 - [x] **S1-code** `run_lr_sweep.sh` 加 `OBJECTIVE` 參數
-- [ ] **S1-lr** SimPO lr 確認：`bash run_lr_sweep.sh`（1e-4 / 3e-4 / 1e-3，約 40 分）
+- [x] **S1-lr** SimPO lr 確認（1e-4 / 3e-4 / 1e-3）→ **三組全部失敗，問題不在 lr**
+- [ ] **S1-loc** 跑 `data/edit_locality.py` 量測 edit ratio，推算 γ 的可達上限（CPU，約 10 分）
+- [ ] **S1-gamma** 依 S1-loc 的結果掃 γ（含 γ=0 作為下界）
+- [ ] **S1-verify** 對照 ProSec 論文原文，確認 β=1.5 / γ=0.5 的出處與參數化方式
 - [ ] **S1-run** SimPO + Prefix 全量訓練（β=1.5、γ=0.5、lr 用 S1-lr 結果、epochs=1）
 - [ ] **S1-eval** 安全評測 + HumanEval + 退化守門
 
@@ -90,7 +93,32 @@
 > 陷阱：β 在 DPO 與 SimPO 之間不可換算，第一輪嚴格用論文的 1.5 / 0.5。
 > **已驗證的陷阱**：TRL 的 `cpo_alpha` 預設 1.0 會變成 CPO-SimPO 混合，
 > 純 SimPO 必須設 0（`train_prefix.py` 已把預設改為 0，並在非 0 時警告）。
-> SimPO 的 reward 尺度與 DPO 差一個量級（實測起點 −10 vs −1.5），不可跨 objective 比大小。
+> SimPO 的 reward 尺度與 DPO 差一個量級，不可跨 objective 比大小。
+
+**S1-lr 結果**（2026-08-26，SimPO β=1.5 γ=0.5 cpo_alpha=0、nvt=16、4,000 筆子集）：
+
+| lr | margins Δ | accuracies late | chosen Δ | rejected Δ | 判讀 |
+|---|---|---|---|---|---|
+| 1e-4 | **−0.053** | **0.390** | −0.813 | −0.749 | margin 縮小，排序變差 |
+| 3e-4 | +0.000 | **0.419** | −0.435 | −0.436 | 兩側同步下降，margin 不動 |
+| 1e-3 | +0.171 | **0.506** | −0.933 | −1.143 | 勉強有 margin，但排序仍≈隨機 |
+
+**三組的 accuracies 都 < 0.51**，代表模型把 rejected 排在 chosen 前面的次數不比隨機少。
+這不是 underfit（DPO 在同樣預算下 accuracies 到 0.61~0.93），是**訓練訊號本身有問題**。
+
+**主要假設：γ 在這份資料上結構性不可達。**
+TRL 的 SimPO 目標 margin = γ/β = 0.5/1.5 = **0.333 nats/token**。已用觀測值驗證 loss 模型
+（預測 0.9364 vs 實測 0.943~0.945）。要把 loss 壓到 0.5 需要 margin 0.622 nats/token，
+即 chosen 每個 token 的機率是 rejected 的 1.86 倍、且要撐過整個序列。
+
+但 ProSec 的 pair 只差 1~3 行——相同的 token 對 margin 貢獻≈0，卻**完整計入長度歸一化的分母**。
+可達 margin ≈ ρ × Δ（ρ=變動 token 比例）。若 ρ≈0.1、Δ≈2 nats，上限僅 0.2，達不到 0.333。
+目標不可達 → loss 永遠停在高梯度區 → 優化器持續往無法擴大 margin 的方向推 → 兩側一起被壓低。
+
+**為什麼 DPO 沒這個問題**：DPO 沒有長度歸一化，margin 是 token 的**加總**，
+少數幾個 diff token 就能推出很大的 margin。SimPO 除以 |y|，margin 被 edit ratio 封頂。
+
+> 這正是 S5（masked SimPO）要解決的機制——只是它以**阻斷者**的身分提早兩步出現了。
 
 **結果**：_（待填）_
 
