@@ -52,8 +52,13 @@ def main():
     ap.add_argument("--limit", type=int, default=None, help="只跑前 N 題(快速試)")
     ap.add_argument("--safecoder_only", action="store_true",
                     help="只保留 SafeCoder 涵蓋的 CWE；配 --langs 的 5 語言可重建論文子集")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="取樣種子。不設(--seed -1)則每次結果不同——"
+                         "base(OFF) 實測會漂移約 1 個百分點，小效果會被雜訊蓋掉")
     ap.add_argument("--out_prefix", default="./outputs/icd_phi3")
     args = ap.parse_args()
+    if args.seed is not None and args.seed < 0:
+        args.seed = None
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tokenizer = AutoTokenizer.from_pretrained(args.model)
@@ -77,9 +82,18 @@ def main():
         data = data[:args.limit]
     from collections import Counter
     print(f"語言={sorted(langset)}；題數={len(data)}；分布={dict(Counter(x['language'] for x in data))}")
+    print(f"取樣：temperature={args.temperature} top_p={args.top_p} num_gen={args.num_gen} "
+          f"seed={args.seed if args.seed is not None else '未固定(每次不同)'}")
 
     @torch.no_grad()
-    def gen(instruction):
+    def gen(instruction, seed=None):
+        # 每題（ON 與 OFF）各自從同一個 RNG 狀態出發，讓兩邊看到同一組隨機性。
+        # 這比只在程式開頭設一次 seed 更有用：ON/OFF 的差值是配對比較，
+        # 消掉共同的抽樣雜訊之後，Δ 的變異會明顯小於各自的變異。
+        if seed is not None:
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
         text = tokenizer.apply_chat_template(
             [{"role": "user", "content": instruction}],
             tokenize=False, add_generation_prompt=True,
@@ -98,11 +112,13 @@ def main():
         for i, x in enumerate(data, 1):
             prompt = x["test_case_prompt"]
             cwe = x.get("cwe_identifier", "")
+            # 同一題的 ON / OFF 用同一個 seed
+            qseed = None if args.seed is None else args.seed * 100003 + i
             # prefix ON
-            resp_on = gen(prompt)
+            resp_on = gen(prompt, qseed)
             # prefix OFF = base
             with model.disable_adapter():
-                resp_off = gen(prompt)
+                resp_off = gen(prompt, qseed)
             for f, resp in ((f_on, resp_on), (f_off, resp_off)):
                 f.write(json.dumps({
                     "lang": x["language"], "cwe": cwe, "prompt": prompt, "responses": resp,
