@@ -95,21 +95,37 @@ Verified by exact-match overlap: **all 27,400 Dsec `original_instruction` = clus
 - 50k instructions → only 27,400 Dsec, because not every CWE-inducing instruction made Phi-3 emit a
   detector-triggering vulnerability with a valid fix (natural Dsec heuristic filtering).
 
-### 4.3 Selection status (important)
+### 4.3 Selection status — **corrected 2026-08-27**
 
-This 45,785-pair set is the **mixed candidate pool (BEFORE the influence selection)**, not the paper's
-final training set:
+> **This section previously claimed the 45,785 pairs were the un-selected §3.2 candidate pool.
+> That was wrong.** The dataset carries the fingerprints of ProSec's §3.3 selection on both sides.
+> Full derivation in [docs/REPRO_PAPER.md](docs/REPRO_PAPER.md) §4.
 
-| | our `prosec-mixed-…` (45,785) | paper's final set |
+**Evidence that selection has already been applied:**
+
+| # | Observation | What it implies |
 |---|---|---|
-| Stage | §3.2 mixed candidate pool (pre-selection) | §3.3 influence-selected |
-| Dnorm influence selection (top-2 + drop bottom 20%) | ❌ not done | ✅ |
-| Size | 45,785 | ~10k (paper: "7× SafeCoder") |
-| HF dataset | released | `prosecalign/top2-cds-0.8-kendall-…` (empty/placeholder, not released) |
+| 1 | Rows are **strictly partitioned**: Dsec occupies index 0–27,399, Dnorm 27,400–45,784, no interleaving | `mix_and_upload_original_w_fixed_batch.py` ends with `shuffle(seed=42)` and **cannot** produce this. `sample_refactored.py` (the selection script) ends with `concatenate_datasets([ifv_ds, onf_ds])`, unshuffled — exact match |
+| 2 | Within one instruction, Dsec `y_f` pairwise similarity is p50 **0.146**, p90 0.332, and **0.0%** exceed 0.9; pairs per instruction cap at **3**; all 27,400 `y_f` and all 27,400 `y_v` are distinct | §3.3's D\*sec heuristic filter (AST check + fuzzy-ratio dedup) has run |
+| 3 | Dnorm candidates per Dsec entry cap at **2** (1 candidate: 4,227 groups; 2: 7,079; ≥3: **none**) | the `top_n=2` step has run |
 
-> Implication: we train on the **un-selected** pool. This partly explains why our utility drops more than
-> the paper (the paper preserves utility via the §3.3 Dnorm influence selection, which we have not applied).
-> Running influence selection ourselves on these 45,785 pairs is the faithful "Direction 3 (full)" next step.
+**What is still unknown:**
+
+- Whether the `cds-0.8` step (drop the globally least-influential 20%) was also applied — the row
+  counts neither confirm nor rule it out.
+- The authors also host a separate `prosecalign/top2-cds-0.8-kendall-on-neg_if-corr-max-2`
+  (private, HTTP 401). Its existence leaves open that `prosec-mixed-…` is that repo's *input*.
+
+So the honest statement is: **this set has been through selection; whether it is byte-identical to the
+paper's final training set cannot be established from the data alone.**
+
+**Consequences for the rest of this report:**
+
+- "We train on the un-selected pool" is retracted. It must not be used to explain the utility drop.
+- The paper's "~10k / 7× SafeCoder" matches the **11,939 distinct Dsec instructions**, not the
+  45,785 preference pairs. The earlier size mismatch was an artifact of comparing the wrong unit.
+- Re-running influence selection on this data would be a **second** filtering pass, not a
+  reproduction. Training on the 45,785 as-is is the closer reproduction.
 
 ---
 
@@ -233,7 +249,7 @@ Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30.00)
 **Conclusion**:
 - ✅ **Base aligns with the paper** (e.g. JS 52.24 vs 52.24) → the measurement is valid.
 - ✅ **The prefix lowers the vulnerable ratio across all 5 languages** (avg 45.21 → 40.54, −4.67).
-- ⚠️ Our improvement (~10% rel.) is **smaller than ProSec's** (~34% rel.), as expected: we use **DPO (not SimPO)**, **prefix (not LoRA)**, **no influence selection**, and **untuned, 1 epoch**. The paper's own Table 8 shows SimPO ≫ DPO on Phi-3 (25.4% vs 34.7%) — the main lever to close the gap.
+- ⚠️ Our improvement (~10% rel.) is **smaller than ProSec's** (~34% rel.), as expected: we use **DPO (not SimPO)**, **prefix (not LoRA)**, and an **untuned lr for 1 epoch** (S0 later showed lr=2e-5 was underfit). The paper's own Table 8 shows SimPO ≫ DPO on Phi-3 (25.4% vs 34.7%) — the main lever to close the gap. *("no influence selection" was listed here until 2026-08-27; retracted — see §4.3.)*
 
 ---
 
@@ -248,7 +264,13 @@ Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30.00)
 | ON (prefix) | **61.59%** |
 | Δ | **−3.05** |
 
-**Conclusion**: the prefix costs a small amount of utility (−3.05 pts, ~4.7% rel.). This **differs from ProSec**, which *preserves / slightly improves* utility — because the paper's utility preservation relies on **Dnorm + influence selection** (§3.3), which we have **not yet applied**. So influence selection is promoted from "optional ablation" to a needed step.
+**Conclusion**: the prefix costs a small amount of utility (−3.05 pts, ~4.7% rel.). This **differs from ProSec**, which *preserves / slightly improves* utility.
+
+> **Corrected 2026-08-27.** This paragraph used to attribute the gap to "we have not applied the §3.3
+> Dnorm influence selection". §4.3 retracts that: the data already carries the selection's fingerprints,
+> so missing selection cannot be the explanation. The remaining candidate causes are the ones we
+> actually differ on: **DPO instead of SimPO**, **prefix instead of LoRA**, and **lr=2e-5, which S0
+> later showed to be underfit**. Which of the three dominates is what S1/S2 are for.
 
 > Note: our absolute pass@1 (Python HumanEval) is **not** directly comparable to the paper's HumanEval-Multi; only the Δ direction is meaningful (ours −3.05 vs paper ≈ flat/up).
 
@@ -311,7 +333,9 @@ but **also** raised epochs 1→2 — two confounded changes. Config: num_virtual
 **TODO**
 - ⏳ **Isolate β**: rerun β=0.05 with **epochs=1** (one variable at a time)
 - ⏳ **Masked / Focused DPO** — loss only on the changed region (SVEN-style mask / StructureCoder / Focused-DPO); targets the utility cost structurally
-- ⏳ **Influence selection (Dnorm)** — recover the utility cost (paper §3.3 mechanism)
+- ⏳ **Influence selection (Dnorm)** — **demoted to an ablation**, no longer a repro step (§4.3: the data
+  is already selected). Scripts exist (`data/collect_training_dynamics.py`, `data/select_dnorm.py`)
+  for varying the Dnorm ratio and for the Dsec-only arm
 - ⏳ Switch DPO → SimPO (TRL CPOTrainer) — main lever to close the security gap to ProSec
 - ⏳ Hyperparameter tuning (num_virtual_tokens, epochs, beta)
 - ⏳ Baseline: ProSec original LoRA (prefix vs LoRA)
@@ -324,7 +348,10 @@ but **also** raised epochs 1→2 — two confounded changes. Config: num_virtual
 | Security: Vulnerable Ratio ↓ (avg 5 langs) | 45.21% | **40.54%** | **−4.67** ✅ |
 | Utility: HumanEval pass@1 ↑ (Python, 164) | 64.63% | **61.59%** | **−3.05** ⚠️ |
 
-**Takeaway**: the prefix improves security (−4.6) at a small utility cost (−3.0). The cost is expected to shrink with **Dnorm influence selection** (paper's utility-preservation mechanism) and **SimPO**, both still to be applied.
+**Takeaway**: the prefix improves security (−4.6) at a small utility cost (−3.0). The levers still
+untried are **SimPO instead of DPO**, **a non-underfit lr** (S0: 2e-5 was underfit), and the
+**LoRA baseline** that tells us whether the cost is specific to prefix at all. *(An earlier version
+of this line expected influence selection to recover the cost; retracted — see §4.3.)*
 
 ---
 
@@ -333,12 +360,19 @@ but **also** raised epochs 1→2 — two confounded changes. Config: num_virtual
 | Script | Purpose |
 |---|---|
 | `data/convert_prosec_to_pref.py` | Convert ProSec HF dataset → (prompt, chosen, rejected) |
-| `train_prefix.py` | Train prefix via PEFT PrefixTuning + TRL DPO |
+| `train_prefix.py` | Train the adapter: PEFT PrefixTuning **or** LoRA (`--peft_method`), via TRL DPO or SimPO |
+| `data/collect_training_dynamics.py` | §3.3 step 2: length-normalized log-probs at each warm-up checkpoint |
+| `data/select_dnorm.py` | §3.3 step 3: Kendall-τ influence score → top-2 per Dsec → drop bottom 20% |
+| `scripts/repro_paper_lora_simpo.sh` | Paper reproduction: LoRA + SimPO with Appendix C hyperparameters |
 | `poc_prefix_smoke.py` | Validate PEFT prefix forward/generate/reference |
 | `eval/gen_compare.py` | Qualitative prefix ON/OFF side-by-side |
 | `eval/gen_for_icd.py` | Generate code for PurpleLlama benchmark (ON/OFF); `--safecoder_only` reproduces the paper subset, `--langs` for multi-language |
 | `eval/normalize_responses.py` | Wrap fence-less responses so code extraction works (run before `detect_all.py`) |
 | `eval/score_detected.py` | Aggregate vulnerable-code ratio per language + per CWE (ON vs OFF) |
 | `eval/run_humaneval.py` | HumanEval pass@1 (ON vs OFF) |
+
+> The `eval/` scripts load adapters with `PeftModel.from_pretrained` + `disable_adapter()`, so they
+> work unchanged for both LoRA and prefix. See [docs/REPRO_PAPER.md](docs/REPRO_PAPER.md) for what
+> in the reproduction comes from the paper and what we had to decide ourselves.
 
 > External (ProSec / PurpleLlama): `prosec_scripts/detect_all.py` runs the Insecure Code Detector (semgrep) on generated code.
