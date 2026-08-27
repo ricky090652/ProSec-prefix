@@ -9,6 +9,12 @@ ProSec 的最終資料（src/mix_and_upload_original_w_fixed_batch.py 產出 / �
 
 注意：ProSec 對 benign(Dnorm) 項已預先把欄位對調好，所以
       chosen=fixed_code, rejected=original_code 對 Dsec 與 Dnorm 都成立。
+      展開來看：
+        Dsec  (benign=False)：chosen = y_f（修好的碼）   rejected = y_v（漏洞碼）
+        Dnorm (benign=True) ：chosen = y_n（正常碼）     rejected = y_f（修好的碼）
+      → **Dnorm.rejected 與它對應的 Dsec.chosen 是同一份 y_f 字串**，
+        §3.3 influence selection 就是靠這個字串把兩邊配對起來
+        （見 ProSec influence_score/sample_refactored.py 的 res2ifv_idx）。
 
 用法：
   # 從 HuggingFace dataset
@@ -59,11 +65,14 @@ def main():
             if chosen.strip() == rejected.strip():
                 continue  # 無偏好訊號，跳過
             rec = {
+                "id": n_out,                  # 穩定 id，influence selection 用來回指
                 "prompt": prompt,
                 "chosen": chosen,
                 "rejected": rejected,
                 "lang": e.get("lang", ""),
                 "cwe": e.get("cwe", ""),
+                # benign=False → Dsec；True → Dnorm。§3.3 的篩選與 --subset 都需要它
+                "benign": bool(e.get("benign", False)),
             }
             fout.write(json.dumps(rec, ensure_ascii=False) + "\n")
             n_out += 1

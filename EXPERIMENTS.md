@@ -196,7 +196,7 @@ TRL 的 SimPO 目標 margin = γ/β = 0.5/1.5 = **0.333 nats/token**。已用觀
 
 ### S2 · E1 LoRA baseline（同管線、同資料）—— 論文成敗關鍵
 
-- [ ] **S2-code** `train_prefix.py` 加 `--peft_method {lora,prefix}`
+- [x] **S2-code** `train_prefix.py` 加 `--peft_method {lora,prefix}`（分支 `repro/prosec-lora-simpo`；Phi-3 的 LoRA target 需自己列，PEFT 沒有 phi3 條目）
 - [ ] **S2-code** 加資源指標記錄 callback（trainable params / adapter 大小 / peak mem / runtime）
 - [ ] **S2-a** LoRA lr sweep：1e-4
 - [ ] **S2-b** LoRA lr sweep：3e-4
@@ -275,8 +275,18 @@ S3 應把 max_length 提到 1536（p95 約 1032）並記錄影響。
 ### S4 · D_norm influence selection 【條件執行】
 
 > **只有當 S3 顯示 E2 的 utility 掉幅仍 > 3 pt 時才做。**
+>
+> **⚠️ 2026-08-27 前提變更**：`prosec-mixed-phi3mini-4k-inst` 很可能**已經是 selection 的輸出**，
+> 不是候選池。三項證據：(1) 每個 D_sec 的 D_norm 候選數硬性卡在 2（=`top_n=2`）；
+> (2) `mix_and_upload` 的邏輯產不出 11,306 個相異 y_f 配 18,385 列；
+> (3) 列的順序是 D_sec 全在前、D_norm 全在後 —— `mix_and_upload` 會 shuffle，
+> `sample_refactored.py` 不會。完整推導見 `docs/REPRO_PAPER.md` §4。
+>
+> **後果**：top-2 那層在我們的資料上是 no-op，只有「丟最低 20%」會動
+> （18,385 → 14,708，總數 42,108）。再跑一次可能是**第二次篩選**，不是復現。
+> 這也讓 `REPORT.md` §4.3「我們用的是未篩選候選池」這條歸因需要重寫。
 
-- [ ] **S4-code** 確認 ProSec repo 有無原版 selection script；沒有則用 gradient-based 近似
+- [x] **S4-code** 確認 ProSec repo 有無原版 selection script → **有**，`ProSec/influence_score/{training_dynamics,sample}_refactored.py`；已照它重寫成 `data/collect_training_dynamics.py` + `data/select_dnorm.py`
 - [ ] **S4-data** 產出篩選後資料集（目標量級約 10k），記錄分布變化
 - [ ] **S4-E1'** LoRA 在篩選後資料上重跑
 - [ ] **S4-E2'** Prefix 在篩選後資料上重跑

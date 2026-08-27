@@ -1,8 +1,12 @@
-"""用 ProSec 偏好資料訓練一組 prefix（PEFT PrefixTuning），支援 DPO 與 SimPO。
+"""用 ProSec 偏好資料訓練一組 adapter（PEFT PrefixTuning 或 LoRA），支援 DPO 與 SimPO。
+
+檔名沿用 train_prefix.py 以免動到 RUNBOOK / eval 腳本的既有指令；
+`--peft_method lora` 才是論文原本的做法（ProSec Appendix C：LoRA r=8, alpha=16）。
 
 設計對應關係（沿用舊 SVEN 概念，但實作全移到現代棧）：
   - SVEN 的「sec prefix」      → PEFT PrefixTuning adapter（只訓練 prefix 參數）
-  - SVEN 的 prefix 零初始化    → PrefixTuningConfig(init_weights="zero")
+  - SVEN 的 prefix 零初始化    → PrefixTuningConfig(init_weights="zero")（僅 prefix 適用）
+  - ProSec 論文原本的 PEFT     → LoraConfig(r=8, lora_alpha=16)
   - ProSec 的 SimPO            → TRL CPOTrainer(loss_type="simpo", cpo_alpha=0)
   - 舊版沿用的 DPO             → TRL DPOTrainer（保留為 ablation 用）
 
@@ -21,15 +25,28 @@
 
   # ablation：DPO（beta 預設自動切成 0.1）
   python train_prefix.py --objective dpo --lr 1e-4 ...
+
+  # 論文復現：LoRA + SimPO（完整設定見 scripts/repro_paper_lora_simpo.sh）
+  python train_prefix.py --peft_method lora --lora_r 8 --lora_alpha 16 \
+      --objective simpo --lr 5e-6 --beta 1.5 --gamma 0.5 \
+      --batch_size 4 --grad_accum 16 --max_steps 1500 \
+      --system_prompt "You are helpful coding assistant." --bf16
 """
 import argparse
 import dataclasses
 import inspect
 
 import torch
+# peft 0.19.1 會直接讀 torch.distributed.tensor.DTensor，但有些 torch build 不會
+# 自動載入這個 submodule，於是 LoRA 掛到 nn.Linear 上時噴 AttributeError。
+# 手動 import 一次把它掛上去（PrefixTuning 走不到這條路徑，所以之前沒踩到）。
+try:
+    import torch.distributed.tensor  # noqa: F401
+except Exception:
+    pass
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import PrefixTuningConfig, TaskType
+from peft import LoraConfig, PrefixTuningConfig, TaskType
 from trl import CPOConfig, CPOTrainer, DPOConfig, DPOTrainer
 
 # beta 在兩個目標函數之間語意完全不同，不可互換：
@@ -38,19 +55,45 @@ from trl import CPOConfig, CPOTrainer, DPOConfig, DPOTrainer
 # 把 DPO 的 0.1 套到 SimPO 上，訓練訊號會弱到幾乎不存在，所以預設值依 objective 決定。
 DEFAULT_BETA = {"dpo": 0.1, "simpo": 1.5}
 
+# PEFT 的 TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING 沒有 phi3 條目，
+# 不指定 target_modules 會直接報錯，所以自己列。Phi-3 把 q/k/v 融成 qkv_proj、
+# gate/up 融成 gate_up_proj，模組名與 llama 系列不同。
+# 論文只寫了 r=8 / alpha=16（Appendix C），沒寫 target modules；他們用的
+# SeCAlign-llama-factory 未公開，而 LLaMA-Factory 的預設是 all-linear，故取 all-linear。
+LORA_TARGETS = {
+    "phi3": ["qkv_proj", "o_proj", "gate_up_proj", "down_proj"],
+    "llama": ["q_proj", "k_proj", "v_proj", "o_proj",
+              "gate_proj", "up_proj", "down_proj"],
+}
+
 # 舊版 PEFT 沒有原生零初始化，需退回手動縮放。
 _HAS_INIT_WEIGHTS = any(f.name == "init_weights"
                         for f in dataclasses.fields(PrefixTuningConfig))
 
 
-def build_dataset(train_file, tokenizer, use_chat_template):
+def build_dataset(train_file, tokenizer, use_chat_template, system_prompt=None,
+                  subset="all"):
     ds = load_dataset("json", data_files=train_file, split="train")
+
+    # subset：§3.3 的暖身訓練只用 D_sec（論文「train on Dsec for 1k steps」）
+    if subset != "all":
+        if "benign" not in ds.column_names:
+            raise SystemExit(
+                "--subset 需要資料含 benign 欄位；請用新版 "
+                "data/convert_prosec_to_pref.py 重新產生 train_pref.jsonl")
+        want = (subset == "dnorm")
+        ds = ds.filter(lambda ex: bool(ex["benign"]) == want)
 
     def fmt(ex):
         if use_chat_template:
+            msgs = []
+            # ProSec 的 encode_oneturn_phi3 有帶 system prompt，復現時要一致，
+            # 否則 policy 看到的 prompt 分布與論文不同
+            if system_prompt:
+                msgs.append({"role": "system", "content": system_prompt})
+            msgs.append({"role": "user", "content": ex["prompt"]})
             ex["prompt"] = tokenizer.apply_chat_template(
-                [{"role": "user", "content": ex["prompt"]}],
-                tokenize=False, add_generation_prompt=True,
+                msgs, tokenize=False, add_generation_prompt=True,
             )
         return ex
 
@@ -109,7 +152,16 @@ def main():
     ap.add_argument("--model", default="microsoft/Phi-3-mini-4k-instruct")
     ap.add_argument("--train_file", default="data/sample_pref.jsonl")
     ap.add_argument("--output_dir", default="outputs/phi3-prefix-simpo")
-    ap.add_argument("--num_virtual_tokens", type=int, default=16)
+    # === PEFT 方法 ===
+    ap.add_argument("--peft_method", choices=["prefix", "lora"], default="prefix",
+                    help="prefix=本研究主線；lora=ProSec 論文原本的做法（Appendix C）")
+    ap.add_argument("--num_virtual_tokens", type=int, default=16,
+                    help="僅 --peft_method prefix 時使用")
+    ap.add_argument("--lora_r", type=int, default=8, help="論文 Appendix C：r=8")
+    ap.add_argument("--lora_alpha", type=int, default=16, help="論文 Appendix C：alpha=16")
+    ap.add_argument("--lora_dropout", type=float, default=0.0)
+    ap.add_argument("--lora_target_modules", default="auto",
+                    help="逗號分隔的模組名；auto=依 model_type 取 all-linear（見 LORA_TARGETS）")
     # === 目標函數 ===
     ap.add_argument("--objective", choices=["simpo", "dpo"], default="simpo",
                     help="simpo=ProSec 論文用的（TRL CPOTrainer）；dpo=舊版，保留作 ablation")
@@ -130,6 +182,12 @@ def main():
     ap.add_argument("--max_prompt_length", type=int, default=512)
     ap.add_argument("--bf16", action="store_true")
     ap.add_argument("--no_chat_template", action="store_true")
+    ap.add_argument("--system_prompt", default=None,
+                    help="套進 chat template 的 system 訊息。論文管線用的是 "
+                         "\"You are helpful coding assistant.\"（ProSec "
+                         "influence_score/data_utils_refactored.py encode_oneturn_phi3）")
+    ap.add_argument("--subset", choices=["all", "dsec", "dnorm"], default="all",
+                    help="只取資料的一部分。§3.3 的暖身訓練用 dsec")
     ap.add_argument("--load_4bit", action="store_true", help="用 bitsandbytes 4-bit 載入以省顯存")
     # === 穩定性相關 ===
     ap.add_argument("--warmup_ratio", type=float, default=0.1,
@@ -169,7 +227,9 @@ def main():
     print(f"objective={args.objective}  beta={beta}"
           + (f"  gamma={args.gamma}  cpo_alpha={args.cpo_alpha}"
              if args.objective == "simpo" else f"  loss_type={args.loss_type}")
-          + f"  lr={args.lr}  epochs={args.epochs}")
+          + f"  lr={args.lr}  epochs={args.epochs}"
+          + f"  effective_batch={args.batch_size * args.grad_accum}"
+          + (f"  max_steps={args.max_steps}" if args.max_steps > 0 else ""))
 
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token_id is None:
@@ -191,22 +251,41 @@ def main():
     if args.gradient_checkpointing:
         model.enable_input_require_grads()  # PEFT + gradient checkpointing 需要
 
-    # 只訓練一組 prefix —— 取代 SVEN 手刻的 prefix_params + hf/ modeling
-    zero_init = args.prefix_init_scale == 0.0
-    peft_kwargs = {}
-    if zero_init and _HAS_INIT_WEIGHTS:
-        peft_kwargs["init_weights"] = "zero"
-    peft_cfg = PrefixTuningConfig(
-        task_type=TaskType.CAUSAL_LM,
-        num_virtual_tokens=args.num_virtual_tokens,
-        **peft_kwargs,
-    )
+    zero_init = args.peft_method == "prefix" and args.prefix_init_scale == 0.0
+    if args.peft_method == "lora":
+        if args.lora_target_modules == "auto":
+            mtype = model.config.model_type
+            if mtype not in LORA_TARGETS:
+                raise SystemExit(
+                    f"model_type={mtype} 沒有內建 LoRA target modules，"
+                    "請用 --lora_target_modules 明確指定")
+            targets = LORA_TARGETS[mtype]
+        else:
+            targets = [m.strip() for m in args.lora_target_modules.split(",") if m.strip()]
+        peft_cfg = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            r=args.lora_r, lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout, target_modules=targets, bias="none",
+        )
+        print(f"PEFT=LoRA r={args.lora_r} alpha={args.lora_alpha} targets={targets}")
+    else:
+        # 只訓練一組 prefix —— 取代 SVEN 手刻的 prefix_params + hf/ modeling
+        peft_kwargs = {}
+        if zero_init and _HAS_INIT_WEIGHTS:
+            peft_kwargs["init_weights"] = "zero"
+        peft_cfg = PrefixTuningConfig(
+            task_type=TaskType.CAUSAL_LM,
+            num_virtual_tokens=args.num_virtual_tokens,
+            **peft_kwargs,
+        )
+        print(f"PEFT=PrefixTuning nvt={args.num_virtual_tokens}")
 
-    train_ds = build_dataset(args.train_file, tokenizer, not args.no_chat_template)
+    train_ds = build_dataset(args.train_file, tokenizer, not args.no_chat_template,
+                             system_prompt=args.system_prompt, subset=args.subset)
     if args.max_samples is not None and args.max_samples < len(train_ds):
         train_ds = train_ds.shuffle(seed=args.seed).select(range(args.max_samples))
         print(f"取隨機子集：{args.max_samples} 筆")
-    print(f"訓練資料：{len(train_ds)} 筆偏好對")
+    print(f"訓練資料：{len(train_ds)} 筆偏好對（subset={args.subset}）")
 
     trainer = build_trainer(args, beta, model, peft_cfg, tokenizer, train_ds)
 
@@ -214,7 +293,10 @@ def main():
     # PEFT 預設隨機初始化，會讓 policy 從第 0 步就大幅偏離 base，造成 reward 量級爆炸。
     # 零初始化 → policy 起步 ≈ base（仿 SVEN）。優先用 PEFT 原生 init_weights，
     # 舊版 PEFT 或需要中間值（如 0.01）時才退回手動縮放。
-    if zero_init and _HAS_INIT_WEIGHTS:
+    if args.peft_method == "lora":
+        # LoRA 的 B 矩陣預設就是零，policy 起步已經 == base，不需要額外處理
+        pass
+    elif zero_init and _HAS_INIT_WEIGHTS:
         print("prefix 初始化：PEFT 原生 init_weights='zero'")
     elif args.prefix_init_scale != 1.0:
         n_scaled = 0
@@ -230,7 +312,7 @@ def main():
     trainer.train()
     trainer.save_model(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
-    print(f"完成。prefix adapter 已存到 {args.output_dir}")
+    print(f"完成。{args.peft_method} adapter 已存到 {args.output_dir}")
 
 
 if __name__ == "__main__":
