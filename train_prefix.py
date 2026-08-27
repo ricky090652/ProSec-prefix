@@ -80,7 +80,9 @@ def build_trainer(args, beta, model, peft_cfg, tokenizer, train_ds):
             {"use_reentrant": False} if args.gradient_checkpointing else None),
         seed=args.seed,
         logging_steps=5,
-        save_strategy="epoch",
+        save_strategy="steps" if args.save_steps else "epoch",
+        save_steps=args.save_steps or 500,
+        save_total_limit=args.save_total_limit,
         report_to=[],
         remove_unused_columns=False,
     )
@@ -147,6 +149,12 @@ def main():
     ap.add_argument("--prefix_init_scale", type=float, default=0.0,
                     help="0=零初始化(仿SVEN，最穩，走 PEFT 原生 init_weights='zero')；"
                          "1=PEFT 預設隨機初始化(會不穩)；其他值=隨機後手動縮放")
+    ap.add_argument("--save_steps", type=int, default=None,
+                    help="每 N 步存一個 checkpoint。長訓練必開——"
+                         "偏好學習後期可能由『拉高 chosen』翻轉成『壓垮兩側』，"
+                         "要有中途點才能回頭挑")
+    ap.add_argument("--save_total_limit", type=int, default=None,
+                    help="最多保留幾個 checkpoint（省磁碟）")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
