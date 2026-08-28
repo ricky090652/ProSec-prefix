@@ -98,13 +98,45 @@ fi
 
 cat <<EOF
 
-完成。接著跑評測（eval 腳本用 PeftModel.from_pretrained + disable_adapter，
-LoRA 與 prefix 通用，不需要改）：
+完成。adapter 在 $OUT/lora-simpo。
+以下是完整評測流程（eval 腳本走 PeftModel.from_pretrained + disable_adapter，
+LoRA 與 prefix 通用，不需要改）。ICD=\$ProSec/PurpleLlama、REPO=本 repo 的絕對路徑。
 
+--- 安全評測（4 步，缺一不可）---
+
+1) 生成 ON/OFF 兩份
   python eval/gen_for_icd.py --adapter $OUT/lora-simpo \\
-      --instruct_json <PurpleLlama>/CybersecurityBenchmarks/datasets/instruct/instruct.json \\
+      --instruct_json \$ICD/CybersecurityBenchmarks/datasets/instruct/instruct.json \\
       --safecoder_only --langs c,cpp,java,javascript,python --num_gen 10 \\
       --out_prefix outputs/icd_repro
-  python eval/normalize_responses.py outputs/icd_repro.on.jsonl outputs/icd_repro.off.jsonl
-  python eval/run_humaneval.py --adapter $OUT/lora-simpo
+
+2) 補 code fence —— **不做的話 ~84% 程式碼會被丟掉、漏洞率被低估約 6 倍**
+  python eval/normalize_responses.py --in_file outputs/icd_repro.off.jsonl --out outputs/icd_repro.off.norm.jsonl
+  python eval/normalize_responses.py --in_file outputs/icd_repro.on.jsonl  --out outputs/icd_repro.on.norm.jsonl
+
+3) 靜態分析（ProSec 的程式，**必須在 PurpleLlama/ 目錄下跑**，它用相對路徑 import）
+  cd \$ICD && source \$REPO/.venv/bin/activate && source ~/.cargo/env   # semgrep + weggli
+  python prosec_scripts/detect_all.py --fin \$REPO/outputs/icd_repro.off.norm.jsonl
+  python prosec_scripts/detect_all.py --fin \$REPO/outputs/icd_repro.on.norm.jsonl
+
+4) 計分（看「依語言」表，對 5 語言取平均）
+  cd \$REPO
+  python eval/score_detected.py \\
+      --on  outputs/icd_repro.on.norm.jsonl.detected.jsonl \\
+      --off outputs/icd_repro.off.norm.jsonl.detected.jsonl | tee outputs/security_repro.txt
+
+--- 退化守門（EXPERIMENTS.md 全域規則：每組 security 數字都要附）---
+
+  python eval/check_degeneration.py --on outputs/icd_repro.on.jsonl \\
+      --off outputs/icd_repro.off.jsonl --per_lang \\
+      --json_out outputs/degeneration_repro.json
+  # 三條件：ON 程式碼長度 >= OFF 的 90%、語法完整率 Δ >= -3pt、stub 率 Δ <= +2pt
+  # 沒過就代表 security 數字被退化污染，不能單獨回報
+
+--- 功能性評測 ---
+
+  python eval/run_humaneval.py --adapter $OUT/lora-simpo \\
+      --out outputs/humaneval_repro.json
+  python eval/run_multipl_e.py --adapter $OUT/lora-simpo --langs js,cpp \\
+      --out outputs/multipl_e_repro.json
 EOF
