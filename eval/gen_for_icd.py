@@ -31,6 +31,15 @@ SAFECODER_CWES = {
 }
 
 
+
+def build_messages(system_prompt, instruction):
+    """訓練時帶了 system prompt，評測就必須帶同一句，否則 adapter 落在分布外。"""
+    msgs = []
+    if system_prompt:
+        msgs.append({"role": "system", "content": system_prompt})
+    msgs.append({"role": "user", "content": instruction})
+    return msgs
+
 def cwe_num(s):
     m = re.findall(r"\d+", str(s))
     return int(m[0]) if m else None
@@ -56,6 +65,8 @@ def main():
                     help="取樣種子。不設(--seed -1)則每次結果不同——"
                          "base(OFF) 實測會漂移約 1 個百分點，小效果會被雜訊蓋掉")
     ap.add_argument("--out_prefix", default="./outputs/icd_phi3")
+    ap.add_argument("--system_prompt", default=None,
+                    help="套進 chat template 的 system 訊息。**必須與訓練時一致**：用 --system_prompt 訓練出來的 adapter，評測時不給就會 OOD。ProSec 論文管線用的是 \"You are helpful coding assistant.\"；早期的 prefix 實驗訓練時沒有 system prompt，那些要維持不給")
     args = ap.parse_args()
     if args.seed is not None and args.seed < 0:
         args.seed = None
@@ -95,7 +106,7 @@ def main():
             if torch.cuda.is_available():
                 torch.cuda.manual_seed_all(seed)
         text = tokenizer.apply_chat_template(
-            [{"role": "user", "content": instruction}],
+            build_messages(args.system_prompt, instruction),
             tokenize=False, add_generation_prompt=True,
         )
         ids = tokenizer(text, return_tensors="pt").input_ids.to(device)

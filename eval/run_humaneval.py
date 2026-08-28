@@ -27,6 +27,15 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
 
+
+def build_messages(system_prompt, instruction):
+    """訓練時帶了 system prompt，評測就必須帶同一句，否則 adapter 落在分布外。"""
+    msgs = []
+    if system_prompt:
+        msgs.append({"role": "system", "content": system_prompt})
+    msgs.append({"role": "user", "content": instruction})
+    return msgs
+
 def extract_code(text):
     """從模型輸出抽出程式碼：優先取 ```python ...``` 區塊，否則取全文。"""
     m = re.search(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
@@ -55,6 +64,8 @@ def main():
     ap.add_argument("--max_new_tokens", type=int, default=512)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--out", default="./outputs/humaneval_result.json")
+    ap.add_argument("--system_prompt", default=None,
+                    help="套進 chat template 的 system 訊息。**必須與訓練時一致**：用 --system_prompt 訓練出來的 adapter，評測時不給就會 OOD。ProSec 論文管線用的是 \"You are helpful coding assistant.\"；早期的 prefix 實驗訓練時沒有 system prompt，那些要維持不給")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -81,7 +92,7 @@ def main():
                  "Return the complete function in a single ```python code block.\n\n"
                  f"```python\n{prompt_code}\n```")
         text = tokenizer.apply_chat_template(
-            [{"role": "user", "content": instr}],
+            build_messages(args.system_prompt, instr),
             tokenize=False, add_generation_prompt=True,
         )
         ids = tokenizer(text, return_tensors="pt").input_ids.to(device)

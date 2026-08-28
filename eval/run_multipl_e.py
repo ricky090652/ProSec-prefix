@@ -32,6 +32,15 @@ LANG_CFG = {"js": "humaneval-js", "cpp": "humaneval-cpp", "java": "humaneval-jav
 LANG_NAME = {"js": "JavaScript", "cpp": "C++", "java": "Java"}
 
 
+
+def build_messages(system_prompt, instruction):
+    """訓練時帶了 system prompt，評測就必須帶同一句，否則 adapter 落在分布外。"""
+    msgs = []
+    if system_prompt:
+        msgs.append({"role": "system", "content": system_prompt})
+    msgs.append({"role": "user", "content": instruction})
+    return msgs
+
 def extract_code(text):
     m = re.search(r"```(?:[a-zA-Z+#]*)\s*\n(.*?)```", text, re.DOTALL)
     return m.group(1) if m else text
@@ -94,6 +103,8 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--javatuples_jar", default=None)
     ap.add_argument("--out", default="./outputs/multipl_e_result.json")
+    ap.add_argument("--system_prompt", default=None,
+                    help="套進 chat template 的 system 訊息。**必須與訓練時一致**：用 --system_prompt 訓練出來的 adapter，評測時不給就會 OOD。ProSec 論文管線用的是 \"You are helpful coding assistant.\"；早期的 prefix 實驗訓練時沒有 system prompt，那些要維持不給")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -115,7 +126,8 @@ def main():
                  f"complete function in a single ```{lang} code block, keeping the exact "
                  f"given signature and name.\n\n```{lang}\n{stub}\n```")
         text = tokenizer.apply_chat_template(
-            [{"role": "user", "content": instr}], tokenize=False, add_generation_prompt=True)
+            build_messages(args.system_prompt, instr),
+            tokenize=False, add_generation_prompt=True)
         ids = tokenizer(text, return_tensors="pt").input_ids.to(device)
         out = model.generate(ids, do_sample=False, max_new_tokens=args.max_new_tokens,
                              pad_token_id=tokenizer.pad_token_id)
