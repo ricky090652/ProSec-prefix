@@ -24,9 +24,11 @@ TRAIN_FILE="${TRAIN_FILE:-data/train_pref.jsonl}"
 OUT="${OUT:-outputs/dpo-arms}"
 
 # --- 兩臂共用（不可分開調，否則對照不成立）---
-BETA=0.1              # S0 / Exp1 的診斷都在這個值上做的。論文 Table 6 的 DPO 用 0.05，
-                      # 但 Exp2 在 0.05 下 utility 崩掉，取較保守（錨較強）的 0.1
-STEPS=800             # @ batch 64 ≈ 1.1 epoch over 45,785；同時也是論文 Table 6 的 DPO 步數
+# 論文 Table 6 的 DPO 那一列就是 0.05。（先前一度改用 0.1，理由是 Exp2 在 0.05 下
+# utility 崩掉——但 Exp2 同時把 epochs 改成 2，是混淆實驗，那個理由站不住。）
+# **run_lr_sweep.sh 必須用同一個值**：BETA=0.05 PEFT_METHOD=... bash run_lr_sweep.sh
+BETA="${BETA:-0.05}"
+STEPS="${STEPS:-800}"   # @ batch 64 ≈ 1.1 epoch over 45,785；同時也是論文 Table 6 的 DPO 步數
 BATCH="${BATCH:-1}"
 ACCUM="${ACCUM:-64}"
 MAX_LENGTH=2048       # S1-loc：1024 會截斷 12% 的樣本
@@ -34,6 +36,9 @@ MAX_PROMPT_LENGTH=1024
 MAX_GRAD_NORM=0.3     # 沿用 S0/Exp1 的值（論文沒寫）。寫出來而不是靠預設，
                       # 因為 run_lr_sweep.sh 必須設成同一個值
 SEED=42
+# 預設關：PrefixTuning 與 gradient checkpointing 不相容，而兩臂必須用同一組設定。
+# batch_size=1 時不需要；LoRA 臂單獨 OOM 才考慮，但那樣兩臂就不對等了。
+GRAD_CKPT="${GRAD_CKPT:-0}"
 
 # --- 各臂的 lr（唯一允許不同的東西）---
 PREFIX_LR="${PREFIX_LR:-1e-4}"
@@ -46,9 +51,10 @@ common=(
   --max_steps $STEPS --batch_size "$BATCH" --grad_accum "$ACCUM"
   --max_length $MAX_LENGTH --max_prompt_length $MAX_PROMPT_LENGTH
   --max_grad_norm $MAX_GRAD_NORM
-  --seed $SEED --bf16 --gradient_checkpointing
+  --seed $SEED --bf16
   --save_steps 100 --save_total_limit 10
 )
+[ "$GRAD_CKPT" = "1" ] && common+=(--gradient_checkpointing)
 # 注意：**不帶 --system_prompt**。ProSec 程式庫裡有三個互不相同的 system prompt，
 # 訓練/評測用哪一個無從查證；不帶才能與既有的 prefix 實驗與 base OFF 基線相容。
 

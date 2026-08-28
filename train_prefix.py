@@ -218,6 +218,16 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
+    # PrefixTuning 會把 prefix 塞進 past_key_values；gradient checkpointing 重算時
+    # 會再串接一次，key 長度變成 (L+nvt)+L，attention mask 對不上直接爆
+    # （RuntimeError: The expanded size of the tensor ... at non-singleton dimension 3）。
+    # LoRA 沒有這個問題，因為它不碰 past_key_values。
+    if args.gradient_checkpointing and args.peft_method == "prefix":
+        print("⚠️  PrefixTuning 與 gradient checkpointing 不相容（prefix 的 "
+              "past_key_values 在重算時會被重複串接），已自動關閉。"
+              "顯存不夠請改小 --batch_size 或 --max_length")
+        args.gradient_checkpointing = False
+
     beta = args.beta if args.beta is not None else DEFAULT_BETA[args.objective]
     if args.objective == "simpo" and args.cpo_alpha > 0:
         print(f"⚠️  cpo_alpha={args.cpo_alpha} > 0 → 這是 CPO-SimPO 混合，不是純 SimPO。"

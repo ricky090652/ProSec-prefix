@@ -31,10 +31,14 @@ GRAD_ACCUM="${GRAD_ACCUM:-64}"
 # ⚠️ 以下四項必須與 scripts/run_dpo_arms.sh 一致，否則是在 A 條件下挑 lr、
 # 拿去跑 B 條件的訓練。之前 max_length 用預設的 1024（截斷 12% 樣本）、
 # 全長訓練卻用 2048，就是這個錯。
-BETA="${BETA:-0.1}"
+BETA="${BETA:-0.05}"   # 與 scripts/run_dpo_arms.sh 一致（論文 Table 6 的 DPO 值）
 MAX_LENGTH="${MAX_LENGTH:-2048}"
 MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
 MAX_GRAD_NORM="${MAX_GRAD_NORM:-0.3}"
+# gradient checkpointing 預設關：PrefixTuning 與它不相容（見 train_prefix.py 的說明），
+# 而 batch_size=1 時本來就不需要。LoRA 臂顯存不夠再開 GRAD_CKPT=1。
+GRAD_CKPT="${GRAD_CKPT:-0}"
+CKPT_FLAG=(); [ "$GRAD_CKPT" = "1" ] && CKPT_FLAG=(--gradient_checkpointing)
 # 16000 筆 / effective batch 64 = 250 個 optimizer step，夠看出趨勢。
 MAX_SAMPLES="${MAX_SAMPLES:-16000}"
 SEED="${SEED:-42}"
@@ -73,7 +77,7 @@ for LR in $LRS; do
     --batch_size "$BATCH" --grad_accum "$GRAD_ACCUM" \
     --max_length "$MAX_LENGTH" --max_prompt_length "$MAX_PROMPT_LENGTH" \
     --max_grad_norm "$MAX_GRAD_NORM" \
-    --bf16 --gradient_checkpointing \
+    --bf16 "${CKPT_FLAG[@]}" \
     2>&1 | tee "$LOG"
   echo
 done
