@@ -95,7 +95,25 @@ def summarize(path):
 
 
 def fmt(v, spec="{:.4f}"):
-    return "—" if v is None else spec.format(v)
+    if v is None:
+        return "—"
+    if isinstance(v, float) and v == float("inf"):
+        return "∞"          # chosen 沒下降，比值無意義（也是最好的情況）
+    return spec.format(v)
+
+
+def suppression_ratio(s):
+    """rejected 的下降量 / chosen 的下降量。
+
+    > 2 代表模型主要在壓低被拒絕的那一側（想要的行為）；
+    趨近 1 代表兩側等速下沉；chosen 反而上升時回傳 inf（最理想）。
+    """
+    dc, dr = delta(s, "rewards/chosen"), delta(s, "rewards/rejected")
+    if dc is None or dr is None:
+        return None
+    if dc >= 0:              # chosen 沒有下降 —— 最好的情況
+        return float("inf")
+    return dr / dc
 
 
 def delta(s, key):
@@ -150,6 +168,11 @@ def main():
     row("rejected early", lambda r: r["rewards/rejected.early"])
     row("rejected late", lambda r: r["rewards/rejected.late"])
     row("rejected Δ ↓好", lambda r: delta(r, "rewards/rejected"), "{:+.4f}")
+    # 尺度無關的關鍵指標：兩側都在掉是偏好學習的常態，重點是「掉得夠不夠不對稱」。
+    # 比值大 = 選擇性壓低漏洞碼；比值趨近 1 = 兩側一起拖下去（真正的崩塌）。
+    # DPO 的 reward 是 token 總和、不做長度歸一化，絕對值會隨序列長度放大，
+    # 所以絕對門檻在 DPO 上會誤判，這個比值才跨 objective 可比。
+    row("  ↳ 壓rej/壓chosen", suppression_ratio, "{:.2f}")
     print("-" * len(hdr))
     row("margins early", lambda r: r["rewards/margins.early"])
     row("margins late", lambda r: r["rewards/margins.late"])

@@ -85,11 +85,35 @@
 > SimPO 的失敗改列為論文的一節，並由 S5（masked SimPO）承接為提出的修正。
 >
 > **新主線**：`scripts/run_dpo_arms.sh`（兩臂唯一差別是 `--peft_method`）
-> - [ ] **D-lr-prefix** `PEFT_METHOD=prefix LRS="5e-5 1e-4 2e-4" bash run_lr_sweep.sh`
-> - [ ] **D-lr-lora** `PEFT_METHOD=lora LRS="5e-6 2e-5 5e-5" bash run_lr_sweep.sh`（同等預算：各 3 點）
+> - [ ] **D-lr-prefix** `PEFT_METHOD=prefix bash run_lr_sweep.sh`（同一張 5 點網格）
+> - [x] **D-lr-lora** → **定案 5e-6**（也正是論文 Table 6 的值）
 > - [ ] **D-run** 兩臂全長 800 steps @ batch 64、β=0.1、**不帶 system prompt**
 > - [ ] **D-eval** 兩臂全套 693 題 × 10 samples × 5 語言 + 退化守門 + HumanEval/MultiPL-E
 >       （100 題×5 的標準誤 2.2pt 分不出兩臂差距，最終對照不可用便宜篩選）
+>
+> **D-lr-lora 結果**（2026-08-28，DPO、batch 64、16,000 筆 = 250 steps、每組約 87 分鐘）：
+>
+> 判讀工具對 5 組全部標 ❌「reward 崩潰」，但**那個門檻對 DPO 過度敏感**——
+> DPO 的 reward 是 β·log(π/π_ref) 的 **token 總和**、不做長度歸一化，
+> 絕對值會隨序列長度放大，不能沿用 SimPO 的絕對門檻。
+> 換算成每 token（β=0.05、chosen 中位數 456 token）後才看得懂：
+>
+> | lr | chosen 每 token 漂移 | 機率保留 | **壓rej/壓chosen** | acc |
+> |---|---|---|---|---|
+> | **5e-6** | −0.006 | **99.4%** | **4.63** ✅ | 0.724 |
+> | 2e-5 | −0.150 | 86.1% | 2.36 | 0.975 |
+> | 5e-5 | −0.746 | 47.4% | 1.94 | 0.989 |
+> | 1e-4 | −1.562 | 21.0% | 1.88 | 0.995 |
+> | 2e-4 | −1.408 | 24.5% | 2.37 | 0.997 |
+>
+> **關鍵是最後一欄的比值**（尺度無關，已加進 `compare_lr_sweep.py` 成為固定欄位）：
+> 兩側同時下降是偏好學習的常態，重點在**不對稱程度**。
+> 5e-6 壓 rejected 的幅度是壓 chosen 的 4.63 倍、chosen 幾乎沒動；
+> lr 一往上比值就掉到 ~1.9，變成兩側等速下沉，那才是真的崩。
+>
+> **定案 lr = 5e-6**，與論文 Table 6 相同。
+> ⚠️ 全長訓練的 β 必須與這輪 sweep 相同，跑之前先確認
+> `grep -h "^objective=" outputs/lr_sweep_dpo_lora/*.log | head -1`。
 >
 > 以下為 SimPO 時期的紀錄，保留供論文的「為什麼不用 SimPO」一節引用。
 
