@@ -9,8 +9,9 @@
 # 同樣數量的 lr 候選。這是論文裡要寫清楚的方法細節，否則對照不成立。
 #
 # 用法：
-#   PEFT_METHOD=prefix LRS="5e-5 1e-4 2e-4" bash run_lr_sweep.sh
-#   PEFT_METHOD=lora   LRS="5e-6 2e-5 5e-5" bash run_lr_sweep.sh
+#   PEFT_METHOD=prefix bash run_lr_sweep.sh
+#   PEFT_METHOD=lora   bash run_lr_sweep.sh
+# 兩臂用同一張預設網格（5 個點），不要各自指定不同的 LRS。
 set -euo pipefail
 
 MODEL="${MODEL:-microsoft/Phi-3-mini-4k-instruct}"
@@ -18,14 +19,22 @@ TRAIN_FILE="${TRAIN_FILE:-data/train_pref.jsonl}"
 OBJECTIVE="${OBJECTIVE:-dpo}"
 PEFT_METHOD="${PEFT_METHOD:-prefix}"
 OUT_DIR="${OUT_DIR:-outputs/lr_sweep_${OBJECTIVE}_${PEFT_METHOD}}"
-# 不同 PEFT 的自然 lr 尺度不同，所以候選範圍不同，但**個數要一樣**。
-#   prefix：S0 在 batch 16 下找到 1e-4 最健康
-#   lora  ：論文 Table 6 的 DPO 用 5e-6
-LRS="${LRS:-5e-5 1e-4 2e-4}"
+# 兩臂掃**同一張網格**——不只個數相同，候選也相同。這比「各自在自己的
+# 尺度範圍內掃」更好辯護：沒有人能說某一臂的範圍被挑過。
+# 網格同時涵蓋論文的 5e-6（Table 6 所有目標函數都用這個值）與
+# S0 在 prefix 上找到的 1e-4。
+LRS="${LRS:-5e-6 2e-5 5e-5 1e-4 2e-4}"
 # 論文的 effective batch 是 64（Appendix C）。S0 用的 16 梯度雜訊大一倍，
 # 已證實會讓同一個 lr 的結論翻轉，所以兩臂都對齊 64。
 BATCH="${BATCH:-1}"
 GRAD_ACCUM="${GRAD_ACCUM:-64}"
+# ⚠️ 以下四項必須與 scripts/run_dpo_arms.sh 一致，否則是在 A 條件下挑 lr、
+# 拿去跑 B 條件的訓練。之前 max_length 用預設的 1024（截斷 12% 樣本）、
+# 全長訓練卻用 2048，就是這個錯。
+BETA="${BETA:-0.1}"
+MAX_LENGTH="${MAX_LENGTH:-2048}"
+MAX_PROMPT_LENGTH="${MAX_PROMPT_LENGTH:-1024}"
+MAX_GRAD_NORM="${MAX_GRAD_NORM:-0.3}"
 # 16000 筆 / effective batch 64 = 250 個 optimizer step，夠看出趨勢。
 MAX_SAMPLES="${MAX_SAMPLES:-16000}"
 SEED="${SEED:-42}"
@@ -41,6 +50,7 @@ fi
 mkdir -p "$OUT_DIR"
 echo "objective：$OBJECTIVE   peft：$PEFT_METHOD   effective batch：$((BATCH * GRAD_ACCUM))"
 echo "資料：$TRAIN_FILE（$(wc -l < "$TRAIN_FILE") 筆，取子集 $MAX_SAMPLES / seed $SEED）"
+echo "beta：$BETA   max_length：$MAX_LENGTH   max_grad_norm：$MAX_GRAD_NORM"
 echo "掃描 lr：$LRS"
 echo
 
@@ -59,8 +69,11 @@ for LR in $LRS; do
     --peft_method "$PEFT_METHOD" \
     --num_virtual_tokens 16 --prefix_init_scale 0 \
     --lora_r 8 --lora_alpha 16 \
-    --objective "$OBJECTIVE" --epochs 1 --lr "$LR" \
-    --batch_size "$BATCH" --grad_accum "$GRAD_ACCUM" --bf16 \
+    --objective "$OBJECTIVE" --beta "$BETA" --epochs 1 --lr "$LR" \
+    --batch_size "$BATCH" --grad_accum "$GRAD_ACCUM" \
+    --max_length "$MAX_LENGTH" --max_prompt_length "$MAX_PROMPT_LENGTH" \
+    --max_grad_norm "$MAX_GRAD_NORM" \
+    --bf16 --gradient_checkpointing \
     2>&1 | tee "$LOG"
   echo
 done

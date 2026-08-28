@@ -12,9 +12,9 @@
 #   lr 各自用「同等搜尋預算」調（見 run_lr_sweep.sh）。
 #
 # 用法：
-#   # 1) 先各掃 3 個 lr（同等預算），看 eval/compare_lr_sweep.py 的判讀挑贏家
-#   PEFT_METHOD=prefix LRS="5e-5 1e-4 2e-4" bash run_lr_sweep.sh
-#   PEFT_METHOD=lora   LRS="5e-6 2e-5 5e-5" bash run_lr_sweep.sh
+#   # 1) 先各掃同一張 5 點 lr 網格（同等預算），看 eval/compare_lr_sweep.py 的判讀挑贏家
+#   PEFT_METHOD=prefix bash run_lr_sweep.sh
+#   PEFT_METHOD=lora   bash run_lr_sweep.sh
 #   # 2) 用挑出來的 lr 跑全長
 #   PREFIX_LR=1e-4 LORA_LR=2e-5 bash scripts/run_dpo_arms.sh
 set -euo pipefail
@@ -31,6 +31,8 @@ BATCH="${BATCH:-1}"
 ACCUM="${ACCUM:-64}"
 MAX_LENGTH=2048       # S1-loc：1024 會截斷 12% 的樣本
 MAX_PROMPT_LENGTH=1024
+MAX_GRAD_NORM=0.3     # 沿用 S0/Exp1 的值（論文沒寫）。寫出來而不是靠預設，
+                      # 因為 run_lr_sweep.sh 必須設成同一個值
 SEED=42
 
 # --- 各臂的 lr（唯一允許不同的東西）---
@@ -43,6 +45,7 @@ common=(
   --objective dpo --beta $BETA
   --max_steps $STEPS --batch_size "$BATCH" --grad_accum "$ACCUM"
   --max_length $MAX_LENGTH --max_prompt_length $MAX_PROMPT_LENGTH
+  --max_grad_norm $MAX_GRAD_NORM
   --seed $SEED --bf16 --gradient_checkpointing
   --save_steps 100 --save_total_limit 10
 )
