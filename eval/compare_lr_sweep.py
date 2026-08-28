@@ -12,11 +12,15 @@ rewards/rejected 下降。若只有 rejected 單邊下降而 chosen 平坦甚至
 用法：
   python eval/compare_lr_sweep.py outputs/lr_sweep/*.log
 
+  # 忘了 tee 的話，直接讀 checkpoint 裡的 trainer_state.json
+  python eval/compare_lr_sweep.py outputs/repro-paper/lora-simpo/checkpoint-1500/trainer_state.json
+
   # 想順便輸出曲線資料做圖
   python eval/compare_lr_sweep.py outputs/lr_sweep/*.log --csv_dir outputs/lr_sweep/curves
 """
 import argparse
 import ast
+import json
 import os
 import re
 
@@ -29,7 +33,17 @@ TRACK = ["loss", "grad_norm", "rewards/chosen", "rewards/rejected",
 
 
 def parse_log(path):
-    """回傳 (records, summary)。records 是每個 logging step 的 dict。"""
+    """回傳 (records, summary)。records 是每個 logging step 的 dict。
+
+    接受兩種輸入：train_prefix.py 的 stdout log，或 checkpoint 裡的
+    trainer_state.json（忘了 tee 時的救援管道，內容是同一批 dict）。
+    """
+    if path.endswith(".json"):
+        state = json.load(open(path))
+        records = [r for r in state.get("log_history", []) if "loss" in r]
+        summary = next((r for r in state.get("log_history", [])
+                        if "train_runtime" in r), {})
+        return records, summary
     text = open(path, errors="replace").read()
     records, summary = [], {}
     for m in LOG_RE.findall(text):
@@ -91,7 +105,8 @@ def delta(s, key):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("logs", nargs="+", help="train_prefix.py 的 stdout log 檔")
+    ap.add_argument("logs", nargs="+",
+                    help="train_prefix.py 的 stdout log 檔，或 checkpoint 的 trainer_state.json")
     ap.add_argument("--csv_dir", default=None, help="把每個 run 的曲線另存成 csv")
     ap.add_argument("--collapse_min_abs", type=float, default=1.0,
                     help="崩潰判定的最小絕對變動量，避免小尺度 reward 被比值誤判")

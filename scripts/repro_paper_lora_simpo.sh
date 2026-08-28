@@ -41,6 +41,7 @@ ACCUM=${ACCUM:-16}
 MAX_LENGTH=${MAX_LENGTH:-2048}
 MAX_PROMPT_LENGTH=${MAX_PROMPT_LENGTH:-1024}
 
+mkdir -p "$OUT"
 echo "effective batch = $((BATCH * ACCUM))（論文 64）"
 [ $((BATCH * ACCUM)) -eq 64 ] || echo "⚠️  不等於 64，這不是論文設定"
 
@@ -60,10 +61,13 @@ common_args=(
 # ── 階段 1：暖身訓練（只用 D_sec，1000 步，每 100 步存檔）────────────────
 if [ "$STAGE" -le 1 ]; then
   echo "=== [1/4] warm-up on D_sec：$WARMUP_STEPS steps ==="
+  # 一定要 tee：train_prefix.py 設 report_to=[]，訓練指標只印到 stdout，
+  # 不存檔的話事後沒東西可以餵給 eval/compare_lr_sweep.py
   python train_prefix.py "${common_args[@]}" \
     --train_file "$TRAIN_FILE" --subset dsec \
     --output_dir "$OUT/warmup-dsec" \
-    --max_steps $WARMUP_STEPS --save_steps $SAVE_STEPS --save_total_limit 20
+    --max_steps $WARMUP_STEPS --save_steps $SAVE_STEPS --save_total_limit 20 \
+    2>&1 | tee "$OUT/warmup-dsec.log"
 fi
 
 # ── 階段 2：在 10 個 checkpoint 上量 training dynamics ────────────────────
@@ -93,12 +97,25 @@ if [ "$STAGE" -le 4 ]; then
   python train_prefix.py "${common_args[@]}" \
     --train_file "$FINAL_TRAIN_FILE" \
     --output_dir "$OUT/lora-simpo" \
-    --max_steps $MAIN_STEPS --save_steps 300 --save_total_limit 6
+    --max_steps $MAIN_STEPS --save_steps 300 --save_total_limit 6 \
+    2>&1 | tee "$OUT/lora-simpo.log"
 fi
 
 cat <<EOF
 
-完成。adapter 在 $OUT/lora-simpo。
+完成。adapter 在 $OUT/lora-simpo，訓練 log 在 $OUT/lora-simpo.log。
+
+--- 先判讀訓練健康度，再決定要不要花幾小時跑評測 ---
+
+  python eval/compare_lr_sweep.py $OUT/lora-simpo.log
+
+  看三件事（判準見下方註解與 EXPERIMENTS.md S0/S1）：
+    1. margin 成長率為正 —— 絕對值無意義，SimPO 與 DPO 的 reward 尺度差一個量級
+    2. margin 是「靠拉高 chosen」長出來的，不是「兩側一起崩」
+    3. grad_norm 全程 < 50
+  rewards/accuracies 低於 0.5 **不是**失敗訊號：這份資料起點就是 ~0.40
+  （y_f 是在看過 y_v 後生成的，只給 x_v 時 y_v 天生機率較高）。
+
 以下是完整評測流程（eval 腳本走 PeftModel.from_pretrained + disable_adapter，
 LoRA 與 prefix 通用，不需要改）。ICD=\$ProSec/PurpleLlama、REPO=本 repo 的絕對路徑。
 
