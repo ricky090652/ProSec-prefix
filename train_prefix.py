@@ -14,23 +14,21 @@
   由 data/convert_prosec_to_pref.py 從 ProSec 最終資料產生。
 
 範例：
-  # S1 主線：SimPO（論文設定 beta=1.5, gamma=0.5）
+  # 主線：DPO（beta 預設 0.1）。SimPO 在這份資料上會失控，見 EXPERIMENTS.md S2-repro
   python train_prefix.py \
       --model microsoft/Phi-3-mini-4k-instruct \
       --train_file data/train_pref.jsonl \
-      --output_dir outputs/phi3-prefix-simpo \
-      --objective simpo --lr 3e-4 \
+      --output_dir outputs/phi3-prefix-dpo \
+      --objective dpo --lr 1e-4 \
       --num_virtual_tokens 16 --epochs 1 \
       --batch_size 1 --grad_accum 16 --bf16
 
-  # ablation：DPO（beta 預設自動切成 0.1）
-  python train_prefix.py --objective dpo --lr 1e-4 ...
-
-  # 論文復現：LoRA + SimPO（完整設定見 scripts/repro_paper_lora_simpo.sh）
+  # LoRA 對照臂（E1）：除了 --peft_method 之外設定與上面完全相同
   python train_prefix.py --peft_method lora --lora_r 8 --lora_alpha 16 \
-      --objective simpo --lr 5e-6 --beta 1.5 --gamma 0.5 \
-      --batch_size 4 --grad_accum 16 --max_steps 1500 \
-      --system_prompt "You are helpful coding assistant." --bf16
+      --objective dpo --lr 5e-6 ...
+
+  # ablation：SimPO（論文預設，已知會失控，保留供對照）
+  python train_prefix.py --objective simpo --beta 1.5 --gamma 0.5 --cpo_alpha 0 ...
 """
 import argparse
 import dataclasses
@@ -151,7 +149,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="microsoft/Phi-3-mini-4k-instruct")
     ap.add_argument("--train_file", default="data/sample_pref.jsonl")
-    ap.add_argument("--output_dir", default="outputs/phi3-prefix-simpo")
+    ap.add_argument("--output_dir", default="outputs/phi3-prefix-dpo")
     # === PEFT 方法 ===
     ap.add_argument("--peft_method", choices=["prefix", "lora"], default="prefix",
                     help="prefix=本研究主線；lora=ProSec 論文原本的做法（Appendix C）")
@@ -163,8 +161,12 @@ def main():
     ap.add_argument("--lora_target_modules", default="auto",
                     help="逗號分隔的模組名；auto=依 model_type 取 all-linear（見 LORA_TARGETS）")
     # === 目標函數 ===
-    ap.add_argument("--objective", choices=["simpo", "dpo"], default="simpo",
-                    help="simpo=ProSec 論文用的（TRL CPOTrainer）；dpo=舊版，保留作 ablation")
+    ap.add_argument("--objective", choices=["simpo", "dpo"], default="dpo",
+                    help="dpo=主線（TRL DPOTrainer，有 reference model 當錨，穩定）。"
+                         "simpo=ProSec 論文預設，但在這份資料上會失控——"
+                         "低 ρ 尾巴的長度歸一化 margin 目標不可達、又沒有 reference 錨，"
+                         "prefix 與 LoRA 兩次都把 chosen/rejected 一起壓垮，見 EXPERIMENTS.md S2-repro。"
+                         "論文 Table 8 本身也驗證過 DPO 在這份資料上有效（Vul 40.76→34.65）")
     ap.add_argument("--beta", type=float, default=None,
                     help=f"不給則依 objective 自動選：{DEFAULT_BETA}。兩者語意不同，不可互換")
     ap.add_argument("--gamma", type=float, default=0.5,

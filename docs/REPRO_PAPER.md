@@ -1,6 +1,22 @@
 # 論文復現：ProSec 原始設定（LoRA + SimPO + §3.3 influence selection）
 
-分支：`repro/prosec-lora-simpo` ｜ 入口：`scripts/repro_paper_lora_simpo.sh`
+入口：`scripts/repro_paper_lora_simpo.sh`
+
+## 0. 結論（2026-08-28）：復現失敗，主線改用 DPO
+
+照論文 Appendix C 的設定跑出來的結果是 **step ~350 起平滑失控**，
+`rewards/chosen` 從 −0.45 掉到 −19（每 token 機率 e^−11.8 ≈ 7.6e-6），模型完全毀掉。
+prefix 之前用 SimPO 也崩過一次。詳細數字與機制在 `EXPERIMENTS.md` S2-repro。
+
+**主線因此改用 DPO**（`scripts/run_dpo_arms.sh`）。這不是退讓：論文
+Appendix D.3 Table 8 自己就驗證過 DPO 在同一份資料上有效
+（Vul 40.76 → 34.65、utility 42.78 → 44.20），Table 6 也給了 DPO 的超參數。
+核心主張是 prefix vs LoRA 的**相對比較**，目標函數是控制變因、不是貢獻，
+只要兩臂用同一個就成立。
+
+這支腳本保留為 SimPO 失敗的可重現紀錄，也是將來測 masked SimPO（S5）的入口。
+
+---
 
 這份文件的用途是把「論文寫死的」「論文沒寫、我們自己決定的」「結構上做不到的」
 三類分開，之後回報數字時才知道哪些差異可以歸因、哪些不行。
@@ -45,7 +61,6 @@ lora-simpo/  →  既有 eval 管線（不需修改）
 | f / g | f = r(x_n, y_n)、g = −r(x_v, y_f) | Eq.(5)(6)、Table 3 第一列 |
 | 相關係數 | Kendall Tau | Eq.(7) |
 | D_norm 選擇 | 每個 D_sec 取 **top-2**，再丟掉全域最低 **20%** | §5 |
-| system prompt | `You are helpful coding assistant.` | ProSec `influence_score/data_utils_refactored.py::encode_oneturn_phi3` |
 
 ### f/g/corr 的設定是怎麼確定的
 
@@ -77,6 +92,7 @@ prosecalign/top2-cds-0.8-kendall-on-neg_if-corr-max-2
 | batch 拆法 | 4 × grad_accum 16 = 64 | 論文用 2×A100-40G；我們單卡，只要乘積是 64 就等價 |
 | 截斷方向 | 超長時砍 prompt 的頭，不砍 response 的尾 | response 被截斷會同時扭曲長度歸一化的分子與分母 |
 | logits shift | 標準 causal shift（位置 t 預測 t+1）| ProSec `scores.py::get_sequence_logps` **沒有做這個 shift**，直接拿 `logits[:,i,:]` 去 gather `labels[:,i]`。那是錯的；我們照正確定義做。影響：他們算出來的 r 有一格偏移，但因為對所有樣本一致，排序相關係數受到的影響有限 |
+| **system prompt** | **不用**（`--system_prompt` 保留為開關，預設空） | 一度誤列為「照論文抄」，**已更正**。ProSec 程式庫裡有三個互不相同的字串：產生資料的 `gen_inferences.py` 用「You are a helpful AI assistant that helps developers implement the given task...」、influence score 的 `data_utils*.py` 用「You are helpful coding assistant.」、訓練用的 `SeCAlign-llama-factory` 未公開。而且 `data_utils_refactored.py` 裡 phi3 的 encoder 是被 `if False` 關掉的。既然無從查證，就選「與既有 prefix 實驗和 base OFF 基線一致」的做法：兩邊都不給 |
 | attention_mask | 有傳 | ProSec 的 `checkpoint_stats` 只傳 `input_ids` 和 `labels`，沒傳 mask，left-padding 的 pad token 會被 attend 到 |
 
 ---

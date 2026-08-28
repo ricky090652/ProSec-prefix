@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# ⚠️ 2026-08-28：這支腳本已**不是主線**，保留為 SimPO 失敗的可重現紀錄。
+#    照論文原始設定跑出來的結果是 step ~350 起平滑失控、chosen 從 -0.45 掉到 -19，
+#    模型完全毀掉（EXPERIMENTS.md S2-repro）。主線已改用 DPO：scripts/run_dpo_arms.sh。
+#    要重現那次崩塌、或將來要測 masked SimPO（S5）時才用這支。
+#
 # ProSec 論文原始設定的復現：Phi-3-mini + LoRA + SimPO + §3.3 influence selection。
 #
 # 超參數全部來自論文，不是我們調出來的：
@@ -33,7 +38,10 @@ LORA_ALPHA=16
 MAIN_STEPS=1500
 WARMUP_STEPS=1000
 SAVE_STEPS=100
-SYSTEM_PROMPT="You are helpful coding assistant."
+# ProSec 程式庫裡有三個互不相同的 system prompt（產生資料的、influence score 的、
+# 訓練用的未公開），無從判斷論文訓練/評測用哪一個，且只給一臂加會破壞 prefix vs LoRA
+# 的對照與既有的 base OFF 基線。預設不用；要重現最初那次崩塌才設。
+SYSTEM_PROMPT="${SYSTEM_PROMPT:-}"
 
 # --- 硬體相關：只要乘積 = 64（論文的 total batch size）就等價 ---
 BATCH=${BATCH:-4}
@@ -52,11 +60,11 @@ common_args=(
   --lr $LR
   --batch_size "$BATCH" --grad_accum "$ACCUM"
   --max_length "$MAX_LENGTH" --max_prompt_length "$MAX_PROMPT_LENGTH"
-  --system_prompt "$SYSTEM_PROMPT"
   --max_grad_norm 1.0            # LLaMA-Factory 預設；不是我們主線的 0.3
   --lr_scheduler_type cosine --warmup_ratio 0.1   # SimPO 官方 recipe
   --bf16 --gradient_checkpointing
 )
+[ -n "$SYSTEM_PROMPT" ] && common_args+=(--system_prompt "$SYSTEM_PROMPT")
 
 # ── 階段 1：暖身訓練（只用 D_sec，1000 步，每 100 步存檔）────────────────
 if [ "$STAGE" -le 1 ]; then
@@ -77,7 +85,7 @@ if [ "$STAGE" -le 2 ]; then
     --train_file "$TRAIN_FILE" --base_model "$MODEL" \
     --ckpt_root "$OUT/warmup-dsec" --out_dir "$OUT/dynamics" \
     --ckpt_every $SAVE_STEPS --sides both \
-    --max_length "$MAX_LENGTH" --system_prompt "$SYSTEM_PROMPT" --bf16
+    --max_length "$MAX_LENGTH" --system_prompt "$SYSTEM_PROMPT" --bf16   # 空字串=不用
 fi
 
 # ── 階段 3：influence selection，產出最終訓練集 ──────────────────────────

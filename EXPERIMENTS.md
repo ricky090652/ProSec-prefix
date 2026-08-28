@@ -6,8 +6,8 @@
 > **使用方式**：跑完一項就把結果貼回對話，Claude 會勾掉對應項目、填入數字、
 > 並依停損點判斷下一步。不要自己改結構，直接貼結果即可。
 
-**目前進度**：論文設定 LoRA+SimPO **step ~350 起平滑失控** · 唯一可用產物是 checkpoint-300 · 待跑 ck-300 便宜篩選
-**上次更新**：2026-08-28（論文復現 LoRA 崩塌 + 評測 system prompt 修正）
+**目前進度**：SimPO 在 prefix 與 LoRA 上皆失控 → **主線改用 DPO**，兩臂同設定比較 · 待跑兩臂 lr sweep
+**上次更新**：2026-08-28（改用 DPO；system prompt 決定不用）
 
 ---
 
@@ -75,7 +75,25 @@
 
 ## L1 · 主線層 —— 論文沒有它就不能投
 
-### S1 · DPO → SimPO 目標函數切換
+### S1 · ~~DPO → SimPO 目標函數切換~~ → **2026-08-28 反轉：主線改回 DPO**
+
+> SimPO 在 prefix（S1-full，step ~450 斷崖）與 LoRA（S2-repro，step ~350 平滑失控）
+> **兩次都崩**。機制已定位（見 S2-repro）。主線改用 DPO，理由：
+> 論文 Appendix D.3 Table 8 自己驗證過 DPO 在這份資料上有效（Vul 40.76 → 34.65、
+> utility 42.78 → 44.20），Table 6 也給了 DPO 超參數；而核心主張是 prefix vs LoRA 的
+> **相對**比較，目標函數是控制變因，兩臂一致即可。
+> SimPO 的失敗改列為論文的一節，並由 S5（masked SimPO）承接為提出的修正。
+>
+> **新主線**：`scripts/run_dpo_arms.sh`（兩臂唯一差別是 `--peft_method`）
+> - [ ] **D-lr-prefix** `PEFT_METHOD=prefix LRS="5e-5 1e-4 2e-4" bash run_lr_sweep.sh`
+> - [ ] **D-lr-lora** `PEFT_METHOD=lora LRS="5e-6 2e-5 5e-5" bash run_lr_sweep.sh`（同等預算：各 3 點）
+> - [ ] **D-run** 兩臂全長 800 steps @ batch 64、β=0.1、**不帶 system prompt**
+> - [ ] **D-eval** 兩臂全套 693 題 × 10 samples × 5 語言 + 退化守門 + HumanEval/MultiPL-E
+>       （100 題×5 的標準誤 2.2pt 分不出兩臂差距，最終對照不可用便宜篩選）
+>
+> 以下為 SimPO 時期的紀錄，保留供論文的「為什麼不用 SimPO」一節引用。
+
+### S1（歷史）· DPO → SimPO 目標函數切換
 
 - [x] **S1-code** `train_prefix.py` 加 `--objective {dpo,simpo}`（SimPO 走 `CPOTrainer`）
 - [x] **S1-code** 加 `--gamma`、`--cpo_alpha`；`--beta` 改為依 objective 自動取預設
