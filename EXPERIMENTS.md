@@ -85,9 +85,9 @@
 > SimPO 的失敗改列為論文的一節，並由 S5（masked SimPO）承接為提出的修正。
 >
 > **新主線**：`scripts/run_dpo_arms.sh`（兩臂唯一差別是 `--peft_method`）
-> - [ ] **D-lr-prefix** `PEFT_METHOD=prefix bash run_lr_sweep.sh`（同一張 5 點網格）
+> - [x] **D-lr-prefix** → **定案 5e-5**（比值 6.30；1e-4 比值掉到 2.62 且 grad 峰值 3722）
 > - [x] **D-lr-lora** → **定案 5e-6**（也正是論文 Table 6 的值）
-> - [ ] **D-run** 兩臂全長 800 steps @ batch 64、β=0.1、**不帶 system prompt**
+> - [x] **D-run** 兩臂全長 800 steps @ batch 64、β=0.05、不帶 system prompt → 見下方結果
 > - [ ] **D-eval** 兩臂全套 693 題 × 10 samples × 5 語言 + 退化守門 + HumanEval/MultiPL-E
 >       （100 題×5 的標準誤 2.2pt 分不出兩臂差距，最終對照不可用便宜篩選）
 >
@@ -148,7 +148,7 @@
 >
 > **已修**：`gen_for_icd.py` 現在把 `truncated` 旗標寫進輸出，
 > `check_degeneration.py` 改用「未截斷者的語法完整率」做判定，並在截斷率 > 20% 時警告。
-> - [ ] **D-screen2** 帶 `--max_new_tokens 1024` 重跑兩臂便宜篩選
+> - [x] **D-screen2** 帶 `--max_new_tokens 1024` 重跑 → 截斷混淆確認，LoRA 語法 −46.00 → **+0.25**
 > - [ ] **D-eval** 兩臂全套 693 題 × 10 samples（等 D-screen2 過關）
 >
 > **D-screen2 結果**（2026-08-30，`--max_new_tokens 1024`、100 題×5、c/cpp）：
@@ -174,15 +174,31 @@
 > 同一段還有 `"..." + input_filename`（C 的 char* 不能用 + 串接，根本編不過），
 > 但括號配對的啟發式判它「語法完整」。
 > 這是 ProSec 論文 Figure 8「不觸發偵測器 ≠ 安全」的變體。
-> - [ ] **D-untrunc** 用 `eval/filter_truncated.py` 成對移除截斷樣本後重算漏洞率。
->       LoRA 截斷 14.4% vs OFF 1.2%，被切掉的區段可能正好含漏洞。
->       若優勢在排除截斷後大幅縮小，−18.80 就有相當部分是假的
+> - [x] **D-untrunc** 成對移除截斷後重算 → **幾乎沒變**：LoRA −18.80 → **−17.80**、
+>       Prefix −6.20 → **−5.82**，差距 12.0 pt。**截斷不是原因，疑點一排除。**
 >
 > **疑點二：兩臂操作點不對等。** LoRA acc 0.975 / margin 4.11，Prefix 只有 0.753 / 0.82。
 > Prefix 明顯訓練強度較低，停在 −6.20 可能是「lr 保守」也可能是「nvt=16 容量不足」，
 > 只有後者才叫能力邊界。
-> - [ ] **E2c** `--num_virtual_tokens 40` 重訓（約 3 小時）。追得上 → 容量問題；
->       幾乎不動 → 才是真天花板
+> **⚠️ 疑點二有了精確的檢驗方式：目前的比較在參數量上差 4 倍。**
+>
+> | 設定 | 可訓練參數 |
+> |---|---|
+> | prefix **nvt=16**（現用） | **3,145,728** |
+> | LoRA r=8 **all-linear**（現用） | **12,582,912** |
+>
+> 而且數字剛好可以精確配對（Phi-3：H=3072、L=32、prefix = nvt×L×2×H）：
+>
+> | 配對 | Prefix | LoRA | 參數 |
+> |---|---|---|---|
+> | 高容量 | **nvt=64** | all-linear ✅已有 | 12,582,912 |
+> | 低容量 | nvt=16 ✅已有 | **只掛 qkv_proj** | 3,145,728 |
+>
+> - [ ] **P-match-hi** prefix nvt=64（對上現有 LoRA all-linear），lr 5e-5、800 steps
+> - [ ] **P-match-lo** LoRA 只掛 qkv_proj（對上現有 prefix nvt=16），lr 5e-6、800 steps
+> - [ ] **P-match-eval** 兩組都跑便宜篩選；這同時產出 S2-RQ2 要的資源對照表
+>
+> 兩組跑完才有資格宣告 H1 不成立——否則結論只是「prefix 在四分之一的參數預算下輸了」。
 >
 > **兩項都做完才有資格宣告 H1 不成立。**
 >
@@ -204,7 +220,8 @@
 - [x] **S1-full** 全長訓練 1500 steps → **step ~450 崩塌**，chosen −0.51 → −5.17
 - [x] **S1-ck** checkpoint-300 vs 1500 比較 → **採用 300**，1500 未過退化守門
 - [x] **S1-seed** `gen_for_icd.py` 加 `--seed`（預設 42），且 ON/OFF **同題共用 seed**（配對比較）
-- [ ] **S1-anchor** 加 `--cpo_alpha 0.05` 錨點重跑 1500 步（最後一次調 S1）
+- [~] ~~**S1-anchor** `--cpo_alpha 0.05` 錨點~~ → 主線改用 DPO 後不再需要；
+      要做也是列為 SimPO 失敗分析的 ablation
 - [ ] **S1-eval** 勝出設定跑全套評測（693 題 × 10 samples × 5 語言）+ HumanEval + MultiPL-E
 - [ ] **S1-loc** 跑 `data/edit_locality.py`（CPU，可與 S1-lr2 並行；S5 前置）
 - [ ] **S1-run** SimPO + Prefix 全量訓練（β=1.5、γ=0.5、lr 用 S1-lr 結果、epochs=1）
@@ -333,10 +350,9 @@ TRL 的 SimPO 目標 margin = γ/β = 0.5/1.5 = **0.333 nats/token**。已用觀
 
 - [x] **S2-code** `train_prefix.py` 加 `--peft_method {lora,prefix}`（分支 `repro/prosec-lora-simpo`；Phi-3 的 LoRA target 需自己列，PEFT 沒有 phi3 條目）
 - [ ] **S2-code** 加資源指標記錄 callback（trainable params / adapter 大小 / peak mem / runtime）
-- [ ] **S2-a** LoRA lr sweep：1e-4
-- [ ] **S2-b** LoRA lr sweep：3e-4
-- [ ] **S2-c** LoRA lr sweep：5e-4
-- [ ] **S2-run** LoRA 最佳設定全量訓練（r=8, α=16, SimPO）
+- [~] ~~**S2-a/b/c** LoRA lr sweep 1e-4 / 3e-4 / 5e-4~~ → 由 **D-lr-lora** 取代
+      （同一張 5 點網格 5e-6~2e-4、DPO、batch 64，定案 5e-6）
+- [x] **S2-run** LoRA 全量訓練 → 由 **D-run** 完成（DPO 而非 SimPO，理由見 S1 反轉）
 - [ ] **S2-eval** 安全評測 + HumanEval + MultiPL-E + 退化守門
 - [ ] **S2-sanity** 與論文 Table 1 的 Phi-3 數字比對（只檢查方向與量級，不要求相同）
 - [ ] **S2-RQ2** 產出資源對照表
