@@ -122,7 +122,17 @@ def main():
             temperature=args.temperature, top_p=args.top_p,
             max_new_tokens=args.max_new_tokens, pad_token_id=tokenizer.pad_token_id,
         )
-        return [tokenizer.decode(o[ids.shape[1]:], skip_special_tokens=True) for o in out]
+        # 記錄有沒有撞到 max_new_tokens。這一格資訊是必要的：ON 若寫得比 OFF 長，
+        # 就會有更高比例被切在半句，括號配不起來 → 退化守門把「被截斷」誤判成
+        # 「寫壞了」。分開這兩件事才能解讀語法完整率。
+        texts, truncated = [], []
+        for o in out:
+            new = o[ids.shape[1]:]
+            texts.append(tokenizer.decode(new, skip_special_tokens=True))
+            # 沒有生出 eos 就代表是被長度上限切掉的
+            truncated.append(bool((new != tokenizer.eos_token_id).all().item())
+                             and len(new) >= args.max_new_tokens)
+        return texts, truncated
 
     f_on = open(f"{args.out_prefix}.on.jsonl", "w")
     f_off = open(f"{args.out_prefix}.off.jsonl", "w")
@@ -133,13 +143,15 @@ def main():
             # 同一題的 ON / OFF 用同一個 seed
             qseed = None if args.seed is None else args.seed * 100003 + i
             # prefix ON
-            resp_on = gen(prompt, qseed)
+            resp_on, trunc_on = gen(prompt, qseed)
             # prefix OFF = base
             with model.disable_adapter():
-                resp_off = gen(prompt, qseed)
-            for f, resp in ((f_on, resp_on), (f_off, resp_off)):
+                resp_off, trunc_off = gen(prompt, qseed)
+            for f, resp, trunc in ((f_on, resp_on, trunc_on),
+                                   (f_off, resp_off, trunc_off)):
                 f.write(json.dumps({
                     "lang": x["language"], "cwe": cwe, "prompt": prompt, "responses": resp,
+                    "truncated": trunc, "max_new_tokens": args.max_new_tokens,
                 }, ensure_ascii=False) + "\n")
                 f.flush()
             if i % 10 == 0:

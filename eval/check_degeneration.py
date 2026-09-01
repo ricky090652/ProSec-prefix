@@ -129,8 +129,11 @@ class Acc:
         self.n_prose = 0
         self.n_parse_ok = 0
         self.n_stub = 0
+        self.n_trunc = 0
+        self.n_untrunc = 0
+        self.n_untrunc_parse_ok = 0
 
-    def add(self, resp, lang, tok):
+    def add(self, resp, lang, tok, truncated=None):
         self.n += 1
         self.resp_chars += len(resp)
         if tok is not None:
@@ -140,8 +143,17 @@ class Acc:
         self.code_lines += len([l for l in code.split("\n") if l.strip()]) if code else 0
         setattr(self, {"fenced": "n_fenced", "raw": "n_raw", "prose": "n_prose"}[source],
                 getattr(self, {"fenced": "n_fenced", "raw": "n_raw", "prose": "n_prose"}[source]) + 1)
-        if parse_ok(code, lang):
+        ok = parse_ok(code, lang)
+        if ok:
             self.n_parse_ok += 1
+        # 撞到 max_new_tokens 的回覆會被切在半句，括號當然配不起來。
+        # 把它們分開統計，才知道語法不完整是「寫壞了」還是「還沒寫完」。
+        if truncated:
+            self.n_trunc += 1
+        elif truncated is not None:
+            self.n_untrunc += 1
+            if ok:
+                self.n_untrunc_parse_ok += 1
         if code and has_stub(code):
             self.n_stub += 1
 
@@ -154,6 +166,9 @@ class Acc:
             "avg_code_chars": self.code_chars / n,
             "avg_code_lines": self.code_lines / n,
             "parse_rate": 100.0 * self.n_parse_ok / n,
+            "trunc_rate": (100.0 * self.n_trunc / n) if (self.n_trunc or self.n_untrunc) else None,
+            "parse_rate_untrunc": (100.0 * self.n_untrunc_parse_ok / self.n_untrunc)
+                                  if self.n_untrunc else None,
             "stub_rate": 100.0 * self.n_stub / n,
             "prose_only_rate": 100.0 * self.n_prose / n,
             "no_fence_rate": 100.0 * self.n_raw / n,
@@ -172,9 +187,11 @@ def load(path, langs, tok):
             lang = e.get("lang", "?")
             if langs and lang not in langs:
                 continue
-            for resp in e.get("responses", []):
-                overall.add(resp, lang, tok)
-                per_lang[lang].add(resp, lang, tok)
+            truncs = e.get("truncated") or []
+            for i, resp in enumerate(e.get("responses", [])):
+                tr = truncs[i] if i < len(truncs) else None
+                overall.add(resp, lang, tok, tr)
+                per_lang[lang].add(resp, lang, tok, tr)
     return overall, per_lang
 
 
@@ -193,6 +210,8 @@ ROWS = [
     ("avg_code_chars", "程式碼字元數", "{:.1f}", "higher"),
     ("avg_code_lines", "程式碼行數", "{:.1f}", "higher"),
     ("parse_rate", "語法完整率 %", "{:.2f}", "higher"),
+    ("trunc_rate", "  ↳ 撞 token 上限 %", "{:.2f}", "lower"),
+    ("parse_rate_untrunc", "  ↳ 未截斷者完整率 %", "{:.2f}", "higher"),
     ("stub_rate", "stub/TODO 率 %", "{:.2f}", "lower"),
     ("prose_only_rate", "只講話無碼 %", "{:.2f}", "lower"),
     ("no_fence_rate", "無 fence 率 %", "{:.2f}", "info"),
@@ -218,8 +237,20 @@ def verdict(off_r, on_r, label=""):
         keep = 100.0 * on_r["avg_code_chars"] / off_r["avg_code_chars"]
         checks.append((keep >= 90.0,
                        f"程式碼長度保留 {keep:.1f}%（需 >= 90%）"))
-    d_parse = on_r["parse_rate"] - off_r["parse_rate"]
-    checks.append((d_parse >= -3.0, f"語法完整率 Δ {d_parse:+.2f} pt（需 >= -3）"))
+    # 有截斷資訊時，用「未被截斷的回覆」算完整率——ON 寫得比較長就會有更多回覆
+    # 撞到 max_new_tokens，那是量測上限的問題，不是模型寫壞了。
+    if off_r.get("parse_rate_untrunc") is not None and on_r.get("parse_rate_untrunc") is not None:
+        d_parse = on_r["parse_rate_untrunc"] - off_r["parse_rate_untrunc"]
+        checks.append((d_parse >= -3.0,
+                       f"語法完整率 Δ {d_parse:+.2f} pt（僅計未截斷者；需 >= -3）"))
+        if on_r.get("trunc_rate") is not None and on_r["trunc_rate"] > 20.0:
+            print(f"\n⚠️  ON 有 {on_r['trunc_rate']:.1f}% 的回覆撞到 max_new_tokens，"
+                  "語法完整率會被嚴重低估；請調高 --max_new_tokens 重跑")
+    else:
+        d_parse = on_r["parse_rate"] - off_r["parse_rate"]
+        checks.append((d_parse >= -3.0,
+                       f"語法完整率 Δ {d_parse:+.2f} pt（需 >= -3）"
+                       "。⚠️ 這批資料沒有截斷旗標，數字可能被 max_new_tokens 污染"))
     d_stub = on_r["stub_rate"] - off_r["stub_rate"]
     checks.append((d_stub <= 2.0, f"stub/TODO 率 Δ {d_stub:+.2f} pt（需 <= +2）"))
 
