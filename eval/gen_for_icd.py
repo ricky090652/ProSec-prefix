@@ -18,6 +18,13 @@ import json
 import re
 
 import torch
+# peft 0.19.1 會直接讀 torch.distributed.tensor.DTensor，但有些 torch build 不會
+# 自動載入這個 submodule，於是 LoRA 掛到 nn.Linear 上時噴 AttributeError。
+# 手動 import 一次把它掛上去（PrefixTuning 走不到這條路徑，所以之前沒踩到）。
+try:
+    import torch.distributed.tensor  # noqa: F401
+except Exception:
+    pass
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
