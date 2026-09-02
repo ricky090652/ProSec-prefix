@@ -173,6 +173,8 @@ def main():
     # DPO 的 reward 是 token 總和、不做長度歸一化，絕對值會隨序列長度放大，
     # 所以絕對門檻在 DPO 上會誤判，這個比值才跨 objective 可比。
     row("  ↳ 壓rej/壓chosen", suppression_ratio, "{:.2f}")
+    print("     （∞ = chosen 完全沒下降，是最佳形狀；但它只衡量選擇性，"
+          "不衡量學了多少，別只看這一列）")
     print("-" * len(hdr))
     row("margins early", lambda r: r["rewards/margins.early"])
     row("margins late", lambda r: r["rewards/margins.late"])
