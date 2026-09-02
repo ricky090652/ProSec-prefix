@@ -105,25 +105,32 @@ def main():
         ids = tokenizer(text, return_tensors="pt").input_ids.to(device)
         out = model.generate(ids, do_sample=False, max_new_tokens=args.max_new_tokens,
                              pad_token_id=tokenizer.pad_token_id)
-        return tokenizer.decode(out[0][ids.shape[1]:], skip_special_tokens=True)
+        new = out[0][ids.shape[1]:]
+        # 撞到 max_new_tokens 的話函式會被切在半途，執行必定失敗 → pass@1 被系統性低估。
+        # 這裡沒有事後補救的餘地（測試就是過或不過），所以一定要知道有沒有發生。
+        truncated = bool((new != tokenizer.eos_token_id).all().item()) and \
+            len(new) >= args.max_new_tokens
+        return tokenizer.decode(new, skip_special_tokens=True), truncated
 
     def evaluate(use_prefix):
         passed = 0
+        n_trunc = 0
         for ex in ds:
             if use_prefix:
-                raw = gen(ex["prompt"])
+                raw, trunc = gen(ex["prompt"])
             else:
                 with model.disable_adapter():
-                    raw = gen(ex["prompt"])
+                    raw, trunc = gen(ex["prompt"])
+            n_trunc += int(trunc)
             code = extract_code(raw)
             if run_one(code, ex["test"], ex["entry_point"]):
                 passed += 1
-        return passed
+        return passed, n_trunc
 
     print("評測 prefix ON ...")
-    on_pass = evaluate(True)
+    on_pass, on_trunc = evaluate(True)
     print("評測 prefix OFF(base) ...")
-    off_pass = evaluate(False)
+    off_pass, off_trunc = evaluate(False)
 
     n = len(ds)
     result = {
@@ -131,6 +138,9 @@ def main():
         "off_pass@1": round(100.0 * off_pass / n, 2),
         "on_pass@1": round(100.0 * on_pass / n, 2),
         "delta": round(100.0 * (on_pass - off_pass) / n, 2),
+        "max_new_tokens": args.max_new_tokens,
+        "off_truncated": off_trunc,
+        "on_truncated": on_trunc,
     }
     json.dump(result, open(args.out, "w"), indent=2)
     print("\n" + "=" * 40)
@@ -138,6 +148,13 @@ def main():
     print(f"  OFF(base) : {result['off_pass@1']}%")
     print(f"  ON(prefix): {result['on_pass@1']}%")
     print(f"  Δ         : {result['delta']:+}%  (≥0 代表功能性未退步)")
+    # 撞到上限的生成一定執行失敗，pass@1 會被系統性低估。ON 若寫得比 OFF 長，
+    # 低估的程度也會不對稱，Δ 因此失真。
+    print(f"  撞 max_new_tokens={args.max_new_tokens}："
+          f"OFF {off_trunc}/{n}、ON {on_trunc}/{n}")
+    if max(on_trunc, off_trunc) > 0.02 * n:
+        print(f"  ⚠️  截斷率超過 2%，pass@1 被低估，Δ 也失真。"
+              f"請調高 --max_new_tokens 重跑")
 
 
 if __name__ == "__main__":

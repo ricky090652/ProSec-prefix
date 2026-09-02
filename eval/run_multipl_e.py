@@ -40,6 +40,9 @@ LANG_NAME = {"js": "JavaScript", "cpp": "C++", "java": "Java"}
 
 
 
+TRUNC = [0]   # 撞到 max_new_tokens 的次數（gen 內累加，各語言評測後回報）
+
+
 def build_messages(system_prompt, instruction):
     """訓練時帶了 system prompt，評測就必須帶同一句，否則 adapter 落在分布外。"""
     msgs = []
@@ -138,7 +141,12 @@ def main():
         ids = tokenizer(text, return_tensors="pt").input_ids.to(device)
         out = model.generate(ids, do_sample=False, max_new_tokens=args.max_new_tokens,
                              pad_token_id=tokenizer.pad_token_id)
-        return extract_code(tokenizer.decode(out[0][ids.shape[1]:], skip_special_tokens=True))
+        new = out[0][ids.shape[1]:]
+        # 撞上限 = 程式被切在半途 = 編譯/執行必定失敗，pass@1 被系統性低估
+        if bool((new != tokenizer.eos_token_id).all().item()) and \
+                len(new) >= args.max_new_tokens:
+            TRUNC[0] += 1
+        return extract_code(tokenizer.decode(new, skip_special_tokens=True))
 
     result = {}
     for lang in [s.strip() for s in args.langs.split(",") if s.strip()]:
@@ -161,11 +169,18 @@ def main():
                         passed += 1
             return passed
 
+        TRUNC[0] = 0
         on, off, n = eval_pass(True), eval_pass(False), len(ds)
+        n_trunc = TRUNC[0]
         result[lang] = {"n": n,
                         "off_pass@1": round(100.0 * off / n, 2),
                         "on_pass@1": round(100.0 * on / n, 2),
                         "delta": round(100.0 * (on - off) / n, 2)}
+        result[lang]["truncated"] = n_trunc
+        result[lang]["max_new_tokens"] = args.max_new_tokens
+        if n_trunc > 0.02 * 2 * n:
+            print(f"  ⚠️  {lang}：{n_trunc}/{2*n} 次生成撞到 "
+                  f"max_new_tokens={args.max_new_tokens}，pass@1 被低估，請調高重跑")
         print(f"  {lang}: OFF {result[lang]['off_pass@1']}%  ON {result[lang]['on_pass@1']}%  "
               f"Δ {result[lang]['delta']:+}")
 
