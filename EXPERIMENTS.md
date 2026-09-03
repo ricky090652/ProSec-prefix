@@ -289,6 +289,30 @@
 > 連帶「epochs=2 會過度訓練」這條結論的證據強度要打折。
 >
 > - [x] **D-humaneval** 兩臂 HumanEval → LoRA −4.27、Prefix −10.98
+> - [x] **D-hedebug** 逐題檢查 prefix 的 27 題退步 → **不是 bug，是真的能力退步**
+>
+> 擔心過的可能性是「prefix 與生成時的 KV cache 互動有問題」——那類 bug 的症狀
+> 正好是「訓練指標健康、生成品質掉」，而本 session 已經踩過一次
+> （gradient checkpointing 重算把 prefix 串接兩次）。逐題檢查排除了它：
+>
+> | 題目 | ON 的錯誤 | 驗證方式 |
+> |---|---|---|
+> | HumanEval/102 | 只判斷端點、沒在區間內搜尋；`choose_num(12,15)` → 12（正解 14） | 實際執行 |
+> | HumanEval/106 | 括號不配對的巢狀 comprehension | `SyntaxError` |
+> | HumanEval/11 | `str(int(x) ^ y)` 漏了 `int(y)` | `TypeError` |
+>
+> 全部是格式正常、註解清楚、但寫錯的程式碼。沒有重複、亂碼、截斷或抽取失敗
+> → **生成路徑與 `extract_code` 都正確**。
+>
+> **行為變化**：ON 傾向寫更壓縮的一行式、並加上多餘的 `# Example usage` /
+> `if __name__ == "__main__":`。第 11 題最露骨——它**把 docstring 裡的預期輸出
+> 從 `'100'` 改成 `'000'`**，改寫規格去遷就自己的錯誤答案。這是推理與指令遵循的退化。
+>
+> 規模：164 題中 27 題退步、約 9 題進步，淨掉 18 題。
+>
+> **共用程式碼因此也被反證是好的**：兩臂走同一支 `train_prefix.py`、同一份資料、
+> 同一個 chat template、同一套評測腳本，只有 peft config 那幾行不同。
+> LoRA 行為合理（−4.27 / −17.80、曲線健康），所以資料前處理與訓練管線沒有問題。
 > - [ ] **D-multipl-e** 兩臂 MultiPL-E js/cpp（記得帶 `--max_new_tokens 2048`）
 >
 > 以下為 SimPO 時期的紀錄，保留供論文的「為什麼不用 SimPO」一節引用。
