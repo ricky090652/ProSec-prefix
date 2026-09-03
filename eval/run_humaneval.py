@@ -89,6 +89,11 @@ def main():
     ap.add_argument("--max_new_tokens", type=int, default=512)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--out", default="./outputs/humaneval_result.json")
+    ap.add_argument("--dump", default=None,
+                    help="把每題的 ON/OFF 生成與通過與否存成 jsonl。"
+                         "只有 pass@1 這個總數的話，沒辦法回答『到底錯在哪』——"
+                         "是寫出微妙錯誤的程式碼（模型真的退步），"
+                         "還是輸出破碎/重複（可能是 adapter 與 KV cache 的互動有問題）")
     ap.add_argument("--system_prompt", default=None,
                     help="套進 chat template 的 system 訊息。**必須與訓練時一致**：用 --system_prompt 訓練出來的 adapter，評測時不給就會 OOD。ProSec 論文管線用的是 \"You are helpful coding assistant.\"；早期的 prefix 實驗訓練時沒有 system prompt，那些要維持不給")
     args = ap.parse_args()
@@ -131,9 +136,12 @@ def main():
             len(new) >= args.max_new_tokens
         return tokenizer.decode(new, skip_special_tokens=True), truncated
 
+    records = {}
+
     def evaluate(use_prefix):
         passed = 0
         n_trunc = 0
+        side = "on" if use_prefix else "off"
         for ex in ds:
             if use_prefix:
                 raw, trunc = gen(ex["prompt"])
@@ -142,8 +150,15 @@ def main():
                     raw, trunc = gen(ex["prompt"])
             n_trunc += int(trunc)
             code = extract_code(raw)
-            if run_one(code, ex["test"], ex["entry_point"]):
+            ok = run_one(code, ex["test"], ex["entry_point"])
+            if ok:
                 passed += 1
+            if args.dump:
+                r = records.setdefault(ex["task_id"], {"task_id": ex["task_id"]})
+                r[f"{side}_pass"] = ok
+                r[f"{side}_code"] = code
+                r[f"{side}_raw"] = raw
+                r[f"{side}_truncated"] = trunc
         return passed, n_trunc
 
     print(f"評測 {kind} ON ...")
@@ -162,6 +177,16 @@ def main():
         "on_truncated": on_trunc,
     }
     json.dump(result, open(args.out, "w"), indent=2)
+    if args.dump:
+        with open(args.dump, "w") as f:
+            for tid in sorted(records):
+                f.write(json.dumps(records[tid], ensure_ascii=False) + "\n")
+        regress = sum(1 for r in records.values()
+                      if r.get("off_pass") and not r.get("on_pass"))
+        gain = sum(1 for r in records.values()
+                   if r.get("on_pass") and not r.get("off_pass"))
+        print(f"  逐題明細 → {args.dump}"
+              f"（OFF 過但 ON 掛：{regress} 題；ON 過但 OFF 掛：{gain} 題）")
     print("\n" + "=" * 40)
     print(f"HumanEval pass@1（n={n}）")
     print(f"  OFF(base) : {result['off_pass@1']}%")
