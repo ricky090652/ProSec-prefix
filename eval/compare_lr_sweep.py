@@ -98,7 +98,9 @@ def fmt(v, spec="{:.4f}"):
     if v is None:
         return "—"
     if isinstance(v, float) and v == float("inf"):
-        return "∞"          # chosen 沒下降，比值無意義（也是最好的情況）
+        return "∞"          # chosen 沒下降、rejected 下降 —— 最好的情況
+    if isinstance(v, float) and v != v:   # NaN
+        return "↑↑"         # 兩側同時上升：從初始擾動回升，比值無意義
     return spec.format(v)
 
 
@@ -111,7 +113,12 @@ def suppression_ratio(s):
     dc, dr = delta(s, "rewards/chosen"), delta(s, "rewards/rejected")
     if dc is None or dr is None:
         return None
-    if dc >= 0:              # chosen 沒有下降 —— 最好的情況
+    if dc >= 0 and dr >= 0:
+        # 兩側**同時上升**。這不是理想形狀，而是「從初始的大幅擾動中回升」——
+        # prefix nvt=64 就是這樣（chosen early −4.44 → late −2.93）。
+        # 此時 margin 的絕對值大多來自初始擾動而非學習，比值沒有意義。
+        return float("nan")
+    if dc >= 0:              # chosen 沒下降、rejected 有下降 —— 最好的情況
         return float("inf")
     return dr / dc
 
@@ -173,8 +180,8 @@ def main():
     # DPO 的 reward 是 token 總和、不做長度歸一化，絕對值會隨序列長度放大，
     # 所以絕對門檻在 DPO 上會誤判，這個比值才跨 objective 可比。
     row("  ↳ 壓rej/壓chosen", suppression_ratio, "{:.2f}")
-    print("     （∞ = chosen 完全沒下降，是最佳形狀；但它只衡量選擇性，"
-          "不衡量學了多少，別只看這一列）")
+    print("     （∞ = chosen 沒降、rejected 有降，最佳形狀；↑↑ = 兩側同時上升，"
+          "代表是從初始擾動回升、margin 多來自擾動而非學習）")
     print("-" * len(hdr))
     row("margins early", lambda r: r["rewards/margins.early"])
     row("margins late", lambda r: r["rewards/margins.late"])
