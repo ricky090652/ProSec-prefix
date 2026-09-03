@@ -43,6 +43,24 @@ LANG_NAME = {"js": "JavaScript", "cpp": "C++", "java": "Java"}
 TRUNC = [0]   # 撞到 max_new_tokens 的次數（gen 內累加，各語言評測後回報）
 
 
+
+def adapter_kind(adapter_path):
+    """從 adapter_config.json 讀出實際的 PEFT 型別，用於輸出標籤。
+
+    腳本一開始只支援 prefix，標籤就寫死成 "prefix"；改成也能載 LoRA 之後
+    這個標籤會誤導（兩臂的輸出看起來一模一樣，分不出跑的是哪個）。
+    """
+    import json as _json, os as _os
+    for name in ("adapter_config.json",):
+        path = _os.path.join(adapter_path, name)
+        if _os.path.exists(path):
+            try:
+                t = _json.load(open(path)).get("peft_type", "")
+                return {"LORA": "LoRA", "PREFIX_TUNING": "prefix"}.get(t, t.lower() or "adapter")
+            except Exception:
+                break
+    return "adapter"
+
 def build_messages(system_prompt, instruction):
     """訓練時帶了 system prompt，評測就必須帶同一句，否則 adapter 落在分布外。"""
     msgs = []
@@ -122,7 +140,8 @@ def main():
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"載入 base：{args.model} + prefix：{args.adapter}")
+    kind = adapter_kind(args.adapter)
+    print(f"載入 base：{args.model} + {kind}：{args.adapter}")
     base = AutoModelForCausalLM.from_pretrained(
         args.model, torch_dtype=torch.bfloat16,
         device_map={"": 0} if device == "cuda" else None,
