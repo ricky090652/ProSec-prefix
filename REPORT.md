@@ -167,7 +167,7 @@ ProSec preference data (45.8k)
 
 ---
 
-## 7. Full Training Result (full 45.8k, 1 epoch)
+## 7. Full Training Result (full 45.8k, 1 epoch) — *superseded, see §13*
 
 Config: num_virtual_tokens = 16, lr = 2e-5, zero-init, ~2.5 h.
 
@@ -213,7 +213,7 @@ Config: num_virtual_tokens = 16, lr = 2e-5, zero-init, ~2.5 h.
 
 ---
 
-## 10. Test 6 — Security Benchmark (paper-aligned)
+## 10. Test 6 — Security Benchmark (paper-aligned) — *Exp1 numbers, superseded by §13*
 
 - **Flow**: `gen_for_icd.py --safecoder_only` (generate ON/OFF) → `normalize_responses.py` → `detect_all.py` (semgrep + weggli + regex) → `score_detected.py`
 - **Paper mapping**: §4 test set PurpleLlama CyberSecEval, §2 static-analyzer oracle, **Table 1 Vulnerable Code Ratio**
@@ -253,7 +253,7 @@ Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30.00)
 
 ---
 
-## 11. Test 7 — Utility Benchmark (HumanEval)
+## 11. Test 7 — Utility Benchmark (HumanEval) — *superseded: measured at max_new_tokens 512, see §13.4*
 
 - **Script**: `run_humaneval.py` — greedy pass@1, generated code executed against HumanEval tests, prefix ON vs OFF.
 - **Scale**: 164 problems (standard Python HumanEval).
@@ -276,7 +276,7 @@ Per-CWE highlights (ON vs OFF): large wins on CWE-295 cert-validation (−30.00)
 
 ---
 
-## 12. Experiment 2 — lower β + more epochs (β=0.05, epochs=2)
+## 12. Experiment 2 — lower β + more epochs (β=0.05, epochs=2) — *retracted, see §13.4*
 
 The main run above is **Exp1** (β=0.1, epochs=1). Here we lowered β (meant to preserve utility)
 but **also** raised epochs 1→2 — two confounded changes. Config: num_virtual_tokens=16, lr=2e-5,
@@ -318,33 +318,167 @@ but **also** raised epochs 1→2 — two confounded changes. Config: num_virtual
 
 ---
 
-## 13. Status & TODO
+## 13. Current Results — DPO, parameter-matched prefix vs LoRA
+
+Everything in §7–§12 above predates three corrections and should not be quoted as current:
+the objective changed (SimPO → DPO), the learning rates were recalibrated at the paper's
+batch size, and the evaluation had a truncation defect that understated every number (§13.4).
+
+### 13.1 Setup
+
+All four arms share the objective, data, hyperparameters, seed and evaluation; only the
+PEFT method and each arm's separately-swept learning rate differ.
+
+| | Value | Source |
+|---|---|---|
+| Objective | DPO (β = 0.05) | paper Table 6, DPO row |
+| Steps / batch | 800 @ effective batch 64 (≈1.12 epoch over 45,785) | paper Table 6 / Appendix C |
+| max_length | 2048 (prompt 1024) | measured: 0.00% of pairs exceed it |
+| lr | LoRA 5e-6, prefix 5e-5 | swept over one shared 5-point grid, equal budget |
+| system prompt | none | ProSec ships three different strings; unverifiable (see [docs/REPRO_PAPER.md](docs/REPRO_PAPER.md) §3) |
+
+**Why DPO and not the paper's SimPO**: SimPO collapsed on this data twice — prefix at step ~450
+and LoRA at the paper's own hyperparameters at step ~350, driving `rewards/chosen` to a per-token
+probability of 7.6e-6. The paper's Appendix D.3 validates DPO on the same dataset
+(Vul 40.76 → 34.65, utility 42.78 → 44.20), and the contribution here is the *relative*
+prefix-vs-LoRA comparison, so the objective is a control variable.
+
+### 13.2 Parameter budgets are matched exactly
+
+Phi-3-mini-4k-instruct has 3,821,079,552 parameters. Prefix tuning trains
+`nvt × 32 layers × 2 (k,v) × 3072`, which lands on the same two values as LoRA r=8:
+
+| Arm | Trainable | Share of model |
+|---|---|---|
+| prefix nvt=16 · LoRA r=8 on `qkv_proj` | **3,145,728** | **0.0823%** |
+| prefix nvt=64 · LoRA r=8 all-linear | **12,582,912** | **0.3293%** |
+
+### 13.3 Results
+
+**Utility — HumanEval pass@1, greedy, 164 problems, `max_new_tokens 2048`, zero truncation
+except where noted. Base (OFF) is 70.73% for all four arms.**
+
+| | 3.1M (0.082%) | 12.6M (0.329%) |
+|---|---|---|
+| **LoRA** | `qkv_proj`: 71.95% (**+1.22**) ✅ | all-linear: 66.46% (−4.27) |
+| **prefix** | nvt=16: 59.76% (−10.98) | nvt=64: 37.80% (**−32.93**) ❌ |
+
+Per-problem: `lora_qkv` regressed 10 and gained 12 — genuine two-way improvement.
+prefix nvt=16 regressed 27 / gained 9; nvt=64 regressed 59 / gained 5.
+(nvt=64 truncated 6/164, so its −32.93 is understated by at most 3.7 pt.)
+
+**Security — vulnerable-code ratio, 100 prompts × 5 samples, c/cpp only. Screening scale,
+not the paper-aligned 693 × 10 × 5 languages.** Only two arms measured so far:
+
+| | Δ (↓ better) | after removing truncated samples pairwise |
+|---|---|---|
+| LoRA all-linear | −18.80 | **−17.80** |
+| prefix nvt=16 | −6.20 | **−5.82** |
+
+**Training dynamics** (early = first 20% of logged steps, late = last 20%):
+
+| Arm | rewards/chosen early→late | chosen retained /token | margin late | acc late | grad peak |
+|---|---|---|---|---|---|
+| LoRA all-linear | −0.031 → −2.707 | 88.8% | **4.113** | **0.975** | 87 |
+| LoRA `qkv_proj` | −0.014 → −0.530 | **97.7%** | 1.611 | 0.885 | 71 |
+| prefix nvt=16 | −0.770 → −1.270 | 94.6% | 0.822 | 0.752 | 18657 |
+| prefix nvt=64 | **−4.441** → −2.930 | 87.9% | 1.323 | 0.740 | 282 |
+
+### 13.4 What these results establish
+
+**① The paper's utility behaviour is reproducible, once the LoRA target modules are right.**
+`lora_qkv` gains +1.22, essentially the paper's DPO row (+1.42). The −4.27 of the all-linear arm
+came from `o_proj / gate_up_proj / down_proj`, which [docs/REPRO_PAPER.md](docs/REPRO_PAPER.md) §3
+had listed as our own assumption because the paper never states them. That assumption was wrong.
+
+**② Prefix loses on both axes, and matching the parameter budget does not rescue it.**
+At 3.1M, LoRA reaches acc 0.885 / 97.7% retention against prefix's 0.752 / 94.6%; at 12.6M,
+0.975 / 88.8% against 0.740 / 87.9%. LoRA at a quarter of the budget beats prefix at the full
+budget on both. This falsifies H1 (prefix matches LoRA on security) and H2 (prefix costs less
+utility) — H2 in the opposite direction from the hypothesis.
+
+**③ Prefix's damage scales with prefix length; LoRA's does not, to the same degree.**
+Quadrupling the budget costs LoRA 5.5 points of utility and prefix 22.0. The training trace
+shows why: nvt=64 starts at `rewards/chosen` −4.441 against nvt=16's −0.770, a 5.8× larger
+perturbation, and 0.796 of its final 1.323 margin already exists before learning begins.
+Lengthening the prefix mostly enlarges a one-off global perturbation of every position's
+attention rather than adding learning capacity.
+
+**④ Two measurement defects were found and fixed, and they invalidate the older numbers.**
+
+- *Truncation.* Generation was capped at 512 tokens with no record of whether the cap bound.
+  The same base model scores **64.63%** at 512 and **70.73%** at 2048 — the base alone was
+  understated by 6.1 pt. Every utility number in §11 and §12 is therefore unusable, and with
+  them the claim that "epochs=2 over-trains". `gen_for_icd.py` and `run_humaneval.py` now record
+  a per-response `truncated` flag; `check_degeneration.py` judges on the untruncated subset;
+  `eval/filter_truncated.py` removes truncated samples from ON and OFF together.
+- *Proxy metrics do not transfer across methods.* The degeneration gate reported prefix as
+  intact (103% code length) and LoRA as bloated (226%), yet prefix lost 2.6× more utility.
+  Per-token retention orders correctly *within* a method but inverts *between* methods.
+  Neither substitutes for pass@1.
+
+### 13.5 What is not yet established
+
+- **`prefix_projection` was never tested.** Li & Liang (2021) reparameterize the prefix through
+  an MLP and report that optimizing it directly is unstable; we used PEFT's direct
+  parameterization. So the claim is "this variant of prefix tuning loses", not "prefix tuning
+  loses". The projection exists only at training time (PEFT builds it under
+  `if prefix_projection and not inference_mode`), so it raises training cost but not the
+  deployed parameter count — the resource table should separate the two.
+- **Prefix's learning rate was never validated at full length.** It was chosen from a 250-step
+  sweep and applied to an 800-step run, 3.2× longer.
+- **Single seed (42) throughout.** The 12-point utility gaps are far outside plausible noise;
+  the 0.752 vs 0.740 accuracy gap is not.
+- **Security is only measured on the 100-prompt c/cpp screen for two of the four arms.**
+
+---
+
+## 14. Status & TODO
 
 **Done**
-- ✅ System integration (ProSec data + PEFT prefix + TRL DPO)
+- ✅ System integration (ProSec data + PEFT prefix/LoRA + TRL DPO/SimPO)
 - ✅ Fixed prefix-init instability (zero-init)
-- ✅ Full training (healthy convergence)
 - ✅ Reconstructed the paper's SafeCoder-overlap eval subset (36 pairs / 693 cases)
 - ✅ Fixed fence-less code-extraction bug (base now aligns with the paper)
-- ✅ Paper-aligned security eval, 5 languages (Exp1 avg 45.21% → 40.54%, all langs down)
-- ✅ Utility eval (Exp1 HumanEval 64.63% → 61.59%, −3.05; MultiPL-E js/cpp added in Exp2)
-- ✅ Exp2 (β=0.05, ep2): more secure but utility collapses → epochs=2 over-trains; Exp1 is the better tradeoff
+- ✅ Data provenance: the released dataset is already §3.3-selected (§4.3) — retracts the earlier
+  "we train on the un-selected pool" claim
+- ✅ SimPO ruled out on this data: collapses for both prefix and LoRA, mechanism identified (§13.1)
+- ✅ lr swept for both arms on one shared 5-point grid at the paper's batch size
+- ✅ Both arms trained at 800 steps, plus both parameter-matched corners (§13.2)
+- ✅ Utility measured for all four arms (§13.3) — LoRA `qkv_proj` reproduces the paper's gain
+- ✅ Truncation defect found and fixed; older utility numbers retracted (§13.4)
 
 **TODO**
-- ⏳ **Isolate β**: rerun β=0.05 with **epochs=1** (one variable at a time)
-- ⏳ **Masked / Focused DPO** — loss only on the changed region (SVEN-style mask / StructureCoder / Focused-DPO); targets the utility cost structurally
-- ⏳ **Influence selection (Dnorm)** — **demoted to an ablation**, no longer a repro step (§4.3: the data
-  is already selected). Scripts exist (`data/collect_training_dynamics.py`, `data/select_dnorm.py`)
-  for varying the Dnorm ratio and for the Dsec-only arm
-- ⏳ Switch DPO → SimPO (TRL CPOTrainer) — main lever to close the security gap to ProSec
-- ⏳ Hyperparameter tuning (num_virtual_tokens, epochs, beta)
-- ⏳ Baseline: ProSec original LoRA (prefix vs LoRA)
+- ⏳ **Security for the two unmeasured corners** (`lora_qkv`, `prefix_nvt64`), and re-run the two
+  measured ones at `max_new_tokens 2048` so all four share one setting
+- ⏳ **`prefix_projection=True`** — the original Li & Liang parameterization, never tested (§13.5).
+  Decides whether the finding is about prefix tuning or only about PEFT's direct variant
+- ⏳ **Paper-aligned security eval** (693 × 10 × 5 languages) once the arms to report are settled;
+  the 100 × 5 screen has a ~2.2 pt standard error and cannot separate close arms
+- ⏳ **MultiPL-E** js/cpp for all arms (with `--max_new_tokens 2048`)
+- ⏳ **Multiple seeds** — everything so far is seed 42
+- ⏳ Prefix lr validated at full length (chosen from a 250-step sweep, applied to 800 steps)
+- ⏳ **Masked / Focused DPO** — loss only on the changed region; the SimPO failure analysis
+  sharpened its rationale (the length-normalized margin is unreachable for the low-ρ tail)
+- ⏳ **Influence selection (Dnorm)** — demoted to an ablation, no longer a repro step (§4.3).
+  Scripts exist (`data/collect_training_dynamics.py`, `data/select_dnorm.py`)
 - ⏳ Phase 2: CodeLlama-7B + self-generated data
 
-**Main result table (current)**
+**Main result table (current)** — DPO, HumanEval at `max_new_tokens 2048`, base OFF 70.73%
 
-| Metric | base Phi-3 (OFF) | +prefix (ON) | Δ |
+| Arm | Trainable | Utility Δ | Security Δ (c/cpp screen) |
 |---|---|---|---|
+| **LoRA `qkv_proj`** | 3.1M | **+1.22** ✅ | not yet measured |
+| LoRA all-linear | 12.6M | −4.27 | **−17.80** |
+| prefix nvt=16 | 3.1M | −10.98 | −5.82 |
+| prefix nvt=64 | 12.6M | −32.93 | not yet measured |
+
+**Takeaway**: at matched parameter budgets LoRA beats prefix on both security and utility, and
+LoRA on `qkv_proj` alone reproduces the paper's utility gain (+1.22 vs +1.42). H1 and H2 are both
+falsified. The open questions are whether `prefix_projection` changes the picture (§13.5) and
+what the two unmeasured security corners look like.
+
+---|---|---|---|
 | Security: Vulnerable Ratio ↓ (avg 5 langs) | 45.21% | **40.54%** | **−4.67** ✅ |
 | Utility: HumanEval pass@1 ↑ (Python, 164) | 64.63% | **61.59%** | **−3.05** ⚠️ |
 
