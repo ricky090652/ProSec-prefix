@@ -12,12 +12,22 @@
 #   PEFT_METHOD=prefix bash run_lr_sweep.sh
 #   PEFT_METHOD=lora   bash run_lr_sweep.sh
 # 兩臂用同一張預設網格（5 個點），不要各自指定不同的 LRS。
+#
+#   # 換了 nvt / dropout 就是換了一個設定，最佳 lr 會移動，要重掃到新的 OUT_DIR：
+#   NVT=8 PREFIX_DROPOUT=0.1 LRS="5e-5 1e-4 2e-4" \
+#     OUT_DIR=outputs/lr_sweep_dpo_prefix_nvt8 bash run_lr_sweep.sh
 set -euo pipefail
 
 MODEL="${MODEL:-microsoft/Phi-3-mini-4k-instruct}"
 TRAIN_FILE="${TRAIN_FILE:-data/train_pref.jsonl}"
 OBJECTIVE="${OBJECTIVE:-dpo}"
 PEFT_METHOD="${PEFT_METHOD:-prefix}"
+# prefix 的結構參數。改動它們等於換一個 PEFT 設定，最佳 lr 會跟著移動，
+# 所以要重掃——`OUT_DIR` 也要換，否則會被當成「已完成」略過。
+NVT="${NVT:-16}"
+PREFIX_DROPOUT="${PREFIX_DROPOUT:-0}"
+LORA_R="${LORA_R:-8}"
+LORA_TARGETS="${LORA_TARGETS:-auto}"
 OUT_DIR="${OUT_DIR:-outputs/lr_sweep_${OBJECTIVE}_${PEFT_METHOD}}"
 # 兩臂掃**同一張網格**——不只個數相同，候選也相同。這比「各自在自己的
 # 尺度範圍內掃」更好辯護：沒有人能說某一臂的範圍被挑過。
@@ -53,6 +63,11 @@ fi
 
 mkdir -p "$OUT_DIR"
 echo "objective：$OBJECTIVE   peft：$PEFT_METHOD   effective batch：$((BATCH * GRAD_ACCUM))"
+if [ "$PEFT_METHOD" = "prefix" ]; then
+  echo "nvt：$NVT   prefix_dropout：$PREFIX_DROPOUT"
+else
+  echo "lora_r：$LORA_R   targets：$LORA_TARGETS"
+fi
 echo "資料：$TRAIN_FILE（$(wc -l < "$TRAIN_FILE") 筆，取子集 $MAX_SAMPLES / seed $SEED）"
 echo "beta：$BETA   max_length：$MAX_LENGTH   max_grad_norm：$MAX_GRAD_NORM"
 echo "掃描 lr：$LRS"
@@ -71,8 +86,10 @@ for LR in $LRS; do
     --output_dir "$OUT_DIR/lr_${LR}" \
     --max_samples "$MAX_SAMPLES" --seed "$SEED" \
     --peft_method "$PEFT_METHOD" \
-    --num_virtual_tokens 16 --prefix_init_scale 0 \
-    --lora_r 8 --lora_alpha 16 \
+    --num_virtual_tokens "$NVT" --prefix_init_scale 0 \
+    --prefix_dropout "$PREFIX_DROPOUT" \
+    --lora_r "$LORA_R" --lora_alpha $((LORA_R * 2)) \
+    --lora_target_modules "$LORA_TARGETS" \
     --objective "$OBJECTIVE" --beta "$BETA" --epochs 1 --lr "$LR" \
     --batch_size "$BATCH" --grad_accum "$GRAD_ACCUM" \
     --max_length "$MAX_LENGTH" --max_prompt_length "$MAX_PROMPT_LENGTH" \
