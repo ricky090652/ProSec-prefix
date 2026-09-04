@@ -69,6 +69,32 @@ _HAS_INIT_WEIGHTS = any(f.name == "init_weights"
                         for f in dataclasses.fields(PrefixTuningConfig))
 
 
+
+def attach_prefix_dropout(model, p):
+    """對 prefix 的 key/value 加 dropout，對齊 SVEN。
+
+    SVEN 在 `sven/model.py` 建了 `nn.Dropout(config.prefix_dropout)`（預設 0.1），
+    套在每層的 `prefix_params[key_idx]` / `[val_idx]` 上；PEFT 的 PrefixEncoder
+    沒有這一層。PEFT 的 `get_prompt()` 是拿 `prompt_encoder(prompt_tokens)` 的輸出
+    去 reshape 成 past_key_values，所以在那個輸出掛 hook 位置等價。
+
+    用 functional dropout 並讀 `mod.training`，這樣 model.eval() 時會自動關閉；
+    自建一個 nn.Dropout 模組的話它的 training flag 不會跟著切換。
+    """
+    encoders = []
+    for m in model.modules():
+        pe = getattr(m, "prompt_encoder", None)
+        if isinstance(pe, torch.nn.ModuleDict):
+            encoders.extend(pe.values())
+    if not encoders:
+        raise SystemExit("找不到 prompt_encoder —— --prefix_dropout 只適用於 "
+                         "--peft_method prefix")
+    for enc in encoders:
+        enc.register_forward_hook(
+            lambda mod, inp, out, _p=p:
+                torch.nn.functional.dropout(out, _p, training=mod.training))
+    return len(encoders)
+
 def build_dataset(train_file, tokenizer, use_chat_template, system_prompt=None,
                   subset="all"):
     ds = load_dataset("json", data_files=train_file, split="train")
@@ -158,6 +184,10 @@ def main():
     ap.add_argument("--lora_r", type=int, default=8, help="論文 Appendix C：r=8")
     ap.add_argument("--lora_alpha", type=int, default=16, help="論文 Appendix C：alpha=16")
     ap.add_argument("--lora_dropout", type=float, default=0.0)
+    ap.add_argument("--prefix_dropout", type=float, default=0.0,
+                    help="對 prefix 的 key/value 加 dropout，對齊 SVEN（其 --dropout 預設 0.1）。"
+                         "PEFT 的 PrefixEncoder 沒有這一層，我們用 forward hook 補上。"
+                         "僅 --peft_method prefix 有效")
     ap.add_argument("--lora_target_modules", default="auto",
                     help="逗號分隔的模組名；auto=依 model_type 取 all-linear（見 LORA_TARGETS）")
     # === 目標函數 ===
@@ -305,6 +335,10 @@ def main():
     # PEFT 預設隨機初始化，會讓 policy 從第 0 步就大幅偏離 base，造成 reward 量級爆炸。
     # 零初始化 → policy 起步 ≈ base（仿 SVEN）。優先用 PEFT 原生 init_weights，
     # 舊版 PEFT 或需要中間值（如 0.01）時才退回手動縮放。
+    if args.prefix_dropout > 0:
+        n = attach_prefix_dropout(trainer.model, args.prefix_dropout)
+        print(f"prefix dropout={args.prefix_dropout}（掛在 {n} 個 prompt_encoder 上，對齊 SVEN）")
+
     if args.peft_method == "lora":
         # LoRA 的 B 矩陣預設就是零，policy 起步已經 == base，不需要額外處理
         pass

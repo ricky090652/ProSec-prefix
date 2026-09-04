@@ -419,12 +419,23 @@ attention rather than adding learning capacity.
 
 ### 13.5 What is not yet established
 
-- **`prefix_projection` was never tested.** Li & Liang (2021) reparameterize the prefix through
-  an MLP and report that optimizing it directly is unstable; we used PEFT's direct
-  parameterization. So the claim is "this variant of prefix tuning loses", not "prefix tuning
-  loses". The projection exists only at training time (PEFT builds it under
-  `if prefix_projection and not inference_mode`), so it raises training cost but not the
-  deployed parameter count — the resource table should separate the two.
+- **Both prefix sizes sit outside SVEN's design range.** SVEN (He & Vechev 2023), the reference
+  this work extends, scales `n_prefix_token` with model size — 5 for codegen-350M, 8 for 2B, 12
+  for 6B (`sven/scripts/train.py:50-57`), which interpolates to roughly 9–10 for Phi-3-mini's
+  3.8B. We ran 16 and 64; the latter is 5.3× SVEN's largest. Since the measured trend is that
+  utility damage grows with `nvt` (−10.98 at 16, −32.93 at 64), SVEN's scale is likely far
+  gentler, and the method as published has effectively not been tested yet. This also qualifies
+  the parameter matching: pushing prefix to 12.6M to match LoRA all-linear is fair on budget but
+  places prefix well outside its intended regime. `scripts/run_sven_scale.sh` runs nvt=8 against
+  a matched LoRA r=4 on `qkv_proj` (1,572,864 parameters each).
+- **`prefix_dropout` was missing.** SVEN applies dropout to each layer's prefix key/value
+  (`sven/model.py:20,30-31`, default 0.1); PEFT's `PrefixEncoder` has no such layer.
+  `train_prefix.py` now provides `--prefix_dropout` via a forward hook on the prompt encoder's
+  output, the tensor PEFT reshapes into `past_key_values`, which is where SVEN applies it.
+- *(Resolved.)* `prefix_projection` was previously listed here as the main gap. SVEN itself uses
+  direct `nn.Parameter` optimization with zero initialization and no MLP reparameterization, so
+  our configuration is faithful to the reference method; the Li & Liang projection is now an
+  optional ablation rather than a correctness concern.
 - **Prefix's learning rate was never validated at full length.** It was chosen from a 250-step
   sweep and applied to an 800-step run, 3.2× longer.
 - **Single seed (42) throughout.** The 12-point utility gaps are far outside plausible noise;
@@ -451,8 +462,10 @@ attention rather than adding learning capacity.
 **TODO**
 - ⏳ **Security for the two unmeasured corners** (`lora_qkv`, `prefix_nvt64`), and re-run the two
   measured ones at `max_new_tokens 2048` so all four share one setting
-- ⏳ **`prefix_projection=True`** — the original Li & Liang parameterization, never tested (§13.5).
-  Decides whether the finding is about prefix tuning or only about PEFT's direct variant
+- ⏳ **`nvt=8` + `--prefix_dropout 0.1` at SVEN's scale** (`scripts/run_sven_scale.sh`), against a
+  matched LoRA r=4 on `qkv_proj`. Both existing prefix arms are larger than SVEN would use, and
+  damage grows with size, so this decides whether the finding is about prefix tuning or about
+  running it too large (§13.5)
 - ⏳ **Paper-aligned security eval** (693 × 10 × 5 languages) once the arms to report are settled;
   the 100 × 5 screen has a ~2.2 pt standard error and cannot separate close arms
 - ⏳ **MultiPL-E** js/cpp for all arms (with `--max_new_tokens 2048`)
@@ -475,8 +488,8 @@ attention rather than adding learning capacity.
 
 **Takeaway**: at matched parameter budgets LoRA beats prefix on both security and utility, and
 LoRA on `qkv_proj` alone reproduces the paper's utility gain (+1.22 vs +1.42). H1 and H2 are both
-falsified. The open questions are whether `prefix_projection` changes the picture (§13.5) and
-what the two unmeasured security corners look like.
+falsified — but **only at prefix sizes above SVEN's design range** (16 and 64 against SVEN's 5–12).
+Until `nvt=8` is measured (§13.5), the claim is about these settings, not about prefix tuning.
 
 ---|---|---|---|
 | Security: Vulnerable Ratio ↓ (avg 5 langs) | 45.21% | **40.54%** | **−4.67** ✅ |

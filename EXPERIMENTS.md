@@ -422,29 +422,83 @@
 > - [x] **P-match-eval（utility）** 四臂 HumanEval 完成
 > - [ ] **P-match-eval（安全性）** 四臂統一用 `--max_new_tokens 2048` 重跑
 >
-> ### 三個未排除的保留條件（下結論前必讀）
+> ### 未排除的保留條件（下結論前必讀）— **2026-09-03 大幅修訂**
 >
-> 「prefix 較差」目前已排除資料、管線、評測層面的解釋：
+> 「prefix 較差」已排除資料、管線、評測層面的解釋：
 > 資料格式實測正確、訓練截斷 0.00%、`disable_adapter` 正確（四臂 OFF 皆 70.73%）、
 > `attention_mask` 實測不影響（逐 token 相同）、生成路徑正常（失敗是條理分明的錯誤程式碼）、
-> 參數量精確配對後仍全面落後。**最強的一項是 LoRA 走同一套程式碼卻拿到與論文一致的 +1.22**
-> ——管線若有問題，這不可能發生。
+> 參數量精確配對後仍全面落後。**最強的一項是 LoRA 走同一套程式碼卻拿到與論文一致的 +1.22。**
 >
-> **但以下三點沒有排除，論文措辭必須反映：**
+> #### ✅ 已解除：`prefix_projection`
 >
-> - [ ] **X3-proj**（最重要）`prefix_projection=True`，nvt=16，其餘不變（約 3 小時）。
->       Li & Liang (2021) 用 MLP 重參數化 prefix，並明說**直接優化 prefix 不穩定**；
->       我們用的是 PEFT 的直接參數化。所以目前的結論是
->       **「PEFT 直接參數化版本的 prefix tuning 較差」，不是「prefix tuning 較差」**。
->       三種結果都有價值：改善 → 我們測的是弱化版，結論要改寫；
->       幾乎沒差 → 論述更強，連原始方法都救不了；訓練不穩 → 也是發現。
+> 先前把「沒測 Li & Liang 的 MLP 重參數化」列為最大保留條件。**查過 SVEN 原始碼後解除。**
+> SVEN（本工作 prefix 的參考方法）用的正是直接參數化，`sven/model.py:13-19`：
+>
+> ```python
+> self.prefix_params = torch.nn.ParameterList()
+> for _ in range(config.n_control):
+>     for _ in range(config.n_layer):
+>         for _ in range(2):                       # key, value
+>             param_size = (config.n_head, config.n_prefix_token, self.n_embed_per_head)
+>             param = torch.nn.Parameter(torch.zeros(param_size, requires_grad=True))
+> ```
+>
+> `nn.Parameter` 直接優化、**沒有 MLP**、而且是 `torch.zeros` **零初始化**——
+> 與我們的 `prefix_projection=False` + `init_weights="zero"` 完全一致，參數量公式也相同。
+> **我們的實作對 SVEN 是忠實的。** `X3-proj` 因此降回 L4 的選配 ablation。
+>
+> #### ⚠️ 換上更嚴重的一條：**兩個實驗點都在 SVEN 的設計範圍之外**
+>
+> SVEN 的 `n_prefix_token` 隨模型大小縮放（`sven/scripts/train.py:50-57`）：
+>
+> | 模型 | n_prefix_token |
+> |---|---|
+> | codegen-350M | 5 |
+> | codegen-2B | 8 |
+> | codegen-6B | 12 |
+> | **Phi-3-mini 3.8B（內插）** | **約 9~10** |
+>
+> 我們跑的是 **nvt=16 和 64**——後者是 SVEN 上限的 **5.3 倍**。
+> 而實測趨勢是「utility 損害隨 nvt 上升」（−10.98 → −32.93），
+> **所以 SVEN 尺度很可能溫和得多，不測這一段等於沒測 SVEN 的方法。**
+>
+> 這也讓「參數配對」需要更誠實的措辭：把 prefix 拉到 12.6M 以配平 LoRA all-linear，
+> **預算上公平，但把 prefix 推到設計意圖之外的區域。**
+>
+> #### ⚠️ `prefix_dropout` 先前沒對齊（已補上）
+>
+> SVEN 對每層的 prefix key/value 加 dropout（`sven/model.py:20,30-31`，`--dropout` 預設 0.1），
+> PEFT 的 `PrefixEncoder` 沒有這一層。`train_prefix.py` 已加 `--prefix_dropout`，
+> 用 forward hook 掛在 `prompt_encoder` 的輸出（= PEFT 拿去 reshape 成 past_key_values 的張量，
+> 位置與 SVEN 等價）。實測 train 模式生效、eval 模式自動關閉。
+>
+> #### 待跑
+>
+> 參數量剛好又能精確配對（`prefix = nvt × 32 × 2 × 3072`）：
+>
+> | 配對 | prefix | LoRA | 參數 | 狀態 |
+> |---|---|---|---|---|
+> | **SVEN 尺度** | **nvt=8 + dropout 0.1** | **r=4 on qkv_proj** | **1,572,864** | ⬅️ `scripts/run_sven_scale.sh` |
+> | | nvt=16 | r=8 on qkv_proj | 3,145,728 | ✅ |
+> | | nvt=64 | r=8 all-linear | 12,582,912 | ✅ |
+>
+> - [ ] **P-sven-hi** prefix nvt=8 + `--prefix_dropout 0.1`
+> - [ ] **P-sven-lo** LoRA r=4 on qkv_proj（配對用）
+> - [ ] **P-sven-eval** 兩組的 HumanEval + 便宜篩選
+>
+> 最想看的指標是 **`rewards/chosen early`**：nvt=16 是 −0.770、nvt=64 是 −4.441。
+> 若 nvt=8 明顯更接近 0，就確認「初始擾動隨 prefix 長度放大」這個機制，
+> 而 SVEN 選 5~12 正是為了壓住它。
+>
+> #### 仍然存在的兩條
+>
 > - [ ] **prefix 的 lr 沒在全長驗證**。5e-5 是從 250 步 sweep 選的，套到 3.2 倍長的 800 步。
->       從沒跑過 prefix @ 2e-5 的全長訓練。
-> - [ ] **只有 seed 42**。utility 的 12 pt 差距遠超雜訊；但 nvt=16 vs 64 的
->       acc 差（0.752 vs 0.740）在雜訊範圍內，不可單獨引用。
+> - [ ] **只有 seed 42**。utility 的 12 pt 差距遠超雜訊；nvt=16 vs 64 的 acc 差
+>       （0.752 vs 0.740）在雜訊範圍內，不可單獨引用。
 >
-> 誠實的措辭：**「在 PEFT 直接參數化、nvt=16/64、DPO、單一 seed 的設定下，
-> prefix 明顯劣於 LoRA，且已排除資料、管線、評測層面的解釋。」**
+> **在 P-sven 跑完之前，論文的措辭應該是**：
+> 「在 nvt=16/64 這兩個**大於 SVEN 建議尺度**的設定下，prefix 明顯劣於 LoRA」，
+> **不能寫成「prefix tuning 較差」。**
 >
 > 以下為 SimPO 時期的紀錄，保留供論文的「為什麼不用 SimPO」一節引用。
 
