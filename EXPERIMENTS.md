@@ -482,9 +482,14 @@
 > | | nvt=16 | r=8 on qkv_proj | 3,145,728 | ✅ |
 > | | nvt=64 | r=8 all-linear | 12,582,912 | ✅ |
 >
-> - [ ] **P-sven-hi** prefix nvt=8 + `--prefix_dropout 0.1`
-> - [ ] **P-sven-lo** LoRA r=4 on qkv_proj（配對用）
-> - [ ] **P-sven-eval** 兩組的 HumanEval + 便宜篩選
+> - [ ] **P-sven** prefix nvt=8 + `--prefix_dropout 0.1`（約 2.5 小時）
+> - [ ] **P-sven-eval** HumanEval + 便宜篩選
+> - [ ] **P-sven-attr**（條件執行）nvt=8 **無** dropout —— ⚠️ nvt=16 那輪沒有 dropout，
+>       這輪長度與 dropout 同時改，是變數混淆。若 nvt=8 明顯改善才跑這組做歸因
+> - [~] ~~**P-sven-lo** LoRA r=4 on qkv_proj~~ → **這輪不需要**。LoRA 的趨勢是參數越少越好
+>       （all-linear 12.6M −4.27 → qkv_proj 3.1M +1.22），r=4(1.57M) 大概率 ≥ +1.22；
+>       拿 prefix nvt=8(1.57M) 比現有的 lora_qkv(3.1M) 已經對 prefix 寬容——它用一半參數
+>       對上 LoRA。只有 prefix nvt=8 反而勝出時才需要補跑以排除參數量效應
 >
 > 最想看的指標是 **`rewards/chosen early`**：nvt=16 是 −0.770、nvt=64 是 −4.441。
 > 若 nvt=8 明顯更接近 0，就確認「初始擾動隨 prefix 長度放大」這個機制，

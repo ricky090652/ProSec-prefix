@@ -20,15 +20,25 @@
 # SVEN 對每層的 prefix key/value 加 dropout（sven/model.py:20,30-31，預設 --dropout 0.1），
 # PEFT 的 PrefixEncoder 沒有這一層，train_prefix.py 用 forward hook 補上。
 #
+# ⚠️ 變數混淆提醒：nvt=16 那一輪**沒有** dropout，這一輪長度與 dropout 同時改。
+# 先跑 SVEN 的完整配置（主要問題是「SVEN 的設定行不行」），若明顯改善再跑
+# ARMS=prefix8nodrop 做歸因，才知道是長度還是 dropout 的功勞。
+#
 # 用法：
-#   bash scripts/run_sven_scale.sh                  # 兩組都跑（約 5-6 小時）
-#   ARMS=prefix8 bash scripts/run_sven_scale.sh     # 只跑其中一組
+#   bash scripts/run_sven_scale.sh                       # 只跑 prefix nvt=8（約 2.5 小時）
+#   ARMS=prefix8nodrop bash scripts/run_sven_scale.sh    # 歸因 ablation（結果好再跑）
+#   ARMS=lorar4 bash scripts/run_sven_scale.sh           # 參數配對用（多半不需要）
 set -euo pipefail
 
 MODEL="${MODEL:-microsoft/Phi-3-mini-4k-instruct}"
 TRAIN_FILE="${TRAIN_FILE:-data/train_pref.jsonl}"
 OUT="${OUT:-outputs/dpo-arms}"
-ARMS="${ARMS:-prefix8 lorar4}"
+# 預設只跑 prefix nvt=8。LoRA r=4 是「參數量精確配對」用的，但這一輪不需要：
+# LoRA 的趨勢是參數越少越好（all-linear 12.6M −4.27 → qkv_proj 3.1M +1.22），
+# 所以 r=4(1.57M) 大概率 >= +1.22。拿 prefix nvt=8(1.57M) 去比現有的
+# lora_qkv(3.1M) 已經對 prefix 寬容——它用一半參數對上 LoRA。
+# 只有在 prefix nvt=8 反而贏過 lora_qkv 時，才需要補跑 r=4 排除參數量效應。
+ARMS="${ARMS:-prefix8}"
 
 # --- 與 run_dpo_arms.sh / run_param_matched.sh 逐項相同 ---
 BETA="${BETA:-0.05}"
@@ -76,15 +86,24 @@ for arm in $ARMS; do
         --lr "$LORA_LR" --output_dir "$OUT/lora_r4" \
         2>&1 | tee "$OUT/lora_r4.log"
       ;;
-    *) echo "未知的 arm：$arm（可用：prefix8 lorar4）"; exit 1 ;;
+    prefix8nodrop)
+      # 歸因用：nvt=8 但**不加** dropout。nvt=16 沒有 dropout、nvt=8 有，
+      # 一次動了兩個變數；若 nvt=8 明顯改善，跑這組才分得出是長度還是 dropout 的功勞。
+      echo "=== 歸因 ablation: prefix nvt=8，無 dropout ==="
+      python train_prefix.py "${common[@]}" \
+        --peft_method prefix --num_virtual_tokens 8 --prefix_init_scale 0 \
+        --lr "$PREFIX_LR" --output_dir "$OUT/prefix_nvt8_nodrop" \
+        2>&1 | tee "$OUT/prefix_nvt8_nodrop.log"
+      ;;
+    *) echo "未知的 arm：$arm（可用：prefix8 prefix8nodrop lorar4）"; exit 1 ;;
   esac
 done
 
 cat <<EOF
 
-完成。判讀：
+完成。判讀（跟既有的兩個 prefix 尺寸並排）：
 
-  python eval/compare_lr_sweep.py $OUT/prefix_nvt8.log $OUT/lora_r4.log \\
+  python eval/compare_lr_sweep.py $OUT/prefix_nvt8.log \\
       $OUT/prefix.log $OUT/prefix_nvt64.log
 
 最想看的是 prefix nvt=8 的 \`rewards/chosen early\`。nvt=16 是 −0.770、nvt=64 是 −4.441，
@@ -93,10 +112,9 @@ cat <<EOF
 
 接著跑評測（**兩者都要 --max_new_tokens 2048**）：
 
-  for ARM in prefix_nvt8 lora_r4; do
-    python eval/run_humaneval.py --adapter $OUT/\$ARM --max_new_tokens 2048 \\
-        --out outputs/humaneval_\$ARM.json --dump outputs/humaneval_\${ARM}_detail.jsonl
-  done
+  python eval/run_humaneval.py --adapter $OUT/prefix_nvt8 --max_new_tokens 2048 \\
+      --out outputs/humaneval_prefix_nvt8.json \\
+      --dump outputs/humaneval_prefix_nvt8_detail.jsonl
 
 utility 若從 nvt=16 的 −10.98 明顯回升，就代表先前的結論是
 「我們把 prefix 開得太大」而不是「prefix 這個方法不行」——論文的措辭要跟著改。
