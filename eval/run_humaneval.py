@@ -126,8 +126,12 @@ def main():
             build_messages(args.system_prompt, instr),
             tokenize=False, add_generation_prompt=True,
         )
-        ids = tokenizer(text, return_tensors="pt").input_ids.to(device)
-        out = model.generate(ids, do_sample=False, max_new_tokens=args.max_new_tokens,
+        # Phi-3 的 pad_token_id 與 eos_token_id 同為 32000，HF 無法從 input_ids
+        # 推斷 attention_mask（分不出「填充」與「真的結束符」），會印警告並退回全 1。
+        # 目前 batch=1、無 padding，全 1 剛好正確，但明確傳入才不會在改成批次生成時出錯。
+        enc = tokenizer(text, return_tensors="pt").to(device)
+        ids = enc.input_ids
+        out = model.generate(**enc, do_sample=False, max_new_tokens=args.max_new_tokens,
                              pad_token_id=tokenizer.pad_token_id)
         new = out[0][ids.shape[1]:]
         # 撞到 max_new_tokens 的話函式會被切在半途，執行必定失敗 → pass@1 被系統性低估。
