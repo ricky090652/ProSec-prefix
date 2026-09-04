@@ -422,6 +422,30 @@
 > - [x] **P-match-eval（utility）** 四臂 HumanEval 完成
 > - [ ] **P-match-eval（安全性）** 四臂統一用 `--max_new_tokens 2048` 重跑
 >
+> ### 三個未排除的保留條件（下結論前必讀）
+>
+> 「prefix 較差」目前已排除資料、管線、評測層面的解釋：
+> 資料格式實測正確、訓練截斷 0.00%、`disable_adapter` 正確（四臂 OFF 皆 70.73%）、
+> `attention_mask` 實測不影響（逐 token 相同）、生成路徑正常（失敗是條理分明的錯誤程式碼）、
+> 參數量精確配對後仍全面落後。**最強的一項是 LoRA 走同一套程式碼卻拿到與論文一致的 +1.22**
+> ——管線若有問題，這不可能發生。
+>
+> **但以下三點沒有排除，論文措辭必須反映：**
+>
+> - [ ] **X3-proj**（最重要）`prefix_projection=True`，nvt=16，其餘不變（約 3 小時）。
+>       Li & Liang (2021) 用 MLP 重參數化 prefix，並明說**直接優化 prefix 不穩定**；
+>       我們用的是 PEFT 的直接參數化。所以目前的結論是
+>       **「PEFT 直接參數化版本的 prefix tuning 較差」，不是「prefix tuning 較差」**。
+>       三種結果都有價值：改善 → 我們測的是弱化版，結論要改寫；
+>       幾乎沒差 → 論述更強，連原始方法都救不了；訓練不穩 → 也是發現。
+> - [ ] **prefix 的 lr 沒在全長驗證**。5e-5 是從 250 步 sweep 選的，套到 3.2 倍長的 800 步。
+>       從沒跑過 prefix @ 2e-5 的全長訓練。
+> - [ ] **只有 seed 42**。utility 的 12 pt 差距遠超雜訊；但 nvt=16 vs 64 的
+>       acc 差（0.752 vs 0.740）在雜訊範圍內，不可單獨引用。
+>
+> 誠實的措辭：**「在 PEFT 直接參數化、nvt=16/64、DPO、單一 seed 的設定下，
+> prefix 明顯劣於 LoRA，且已排除資料、管線、評測層面的解釋。」**
+>
 > 以下為 SimPO 時期的紀錄，保留供論文的「為什麼不用 SimPO」一節引用。
 
 ### S1（歷史）· DPO → SimPO 目標函數切換
@@ -774,7 +798,11 @@ S3 應把 max_length 提到 1536（p95 約 1032）並記錄影響。
 
 - [ ] **X1** CWE-specific 多 Prefix（推薦度：高 —— Prefix 相對 LoRA 最有結構性的優勢）
 - [ ] **X2** Prefix 組合與插拔行為分析
-- [ ] **X3** `prefix_projection=True` ablation（必須連同 613M 參數代價一起報告）
+- [~] ~~**X3** `prefix_projection=True` ablation~~ → **升級為 L1 的 `X3-proj`，見下方「三個未排除的保留條件」**
+      （先前寫「必須連同 613M 參數代價一起報告」——那個顧慮**不完全對**：
+      PEFT 只在 `if prefix_projection and not inference_mode` 時建投影，
+      推論期不需要它，部署參數量仍是 3.1M。受影響的只有訓練成本，RQ2 沒被摧毀，
+      但資源對照表要分「訓練期 / 推論期」兩欄）
 - [ ] **X4** FIM 格式 ablation（先驗證模型是否真能解析 FIM token）
 - [ ] **X5** KTO（只有引入未配對資料時才值得）
 - [ ] **X6** Verifier-based weighting
