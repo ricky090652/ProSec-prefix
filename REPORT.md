@@ -358,10 +358,19 @@ Phi-3-mini-4k-instruct has 3,821,079,552 parameters. Prefix tuning trains
 **Utility — HumanEval pass@1, greedy, 164 problems, `max_new_tokens 2048`, zero truncation
 except where noted. Base (OFF) is 70.73% for all four arms.**
 
-| | 3.1M (0.082%) | 12.6M (0.329%) |
-|---|---|---|
-| **LoRA** | `qkv_proj`: 71.95% (**+1.22**) ✅ | all-linear: 66.46% (−4.27) |
-| **prefix** | nvt=16: 59.76% (−10.98) | nvt=64: 37.80% (**−32.93**) ❌ |
+| | 1.57M (0.041%) | 3.1M (0.082%) | 12.6M (0.329%) |
+|---|---|---|---|
+| **LoRA** | — | `qkv_proj`: 71.95% (**+1.22**) ✅ | all-linear: 66.46% (−4.27) |
+| **prefix** | nvt=8 +dropout: 66.46% (**−4.27**) | nvt=16: 59.76% (−10.98) | nvt=64: 37.80% (**−32.93**) ❌ |
+
+Prefix's utility cost is monotone and steep in prefix length, and it tracks the size of the
+one-off perturbation the prefix imposes before any learning happens (`rewards/chosen` at the
+first logged steps, as a per-token probability): 98.0% at nvt=8, 96.7% at 16, 82.3% at 64.
+Halving the prefix from 16 to 8 recovers 6.71 points of pass@1. At SVEN's scale prefix reaches
+LoRA all-linear's −4.27 using **half** its parameters, though it still trails `lora_qkv`'s +1.22.
+
+⚠️ The nvt=16 run had no dropout and the nvt=8 run has 0.1, so the −10.98 → −4.27 improvement
+cannot yet be attributed between prefix length and dropout.
 
 Per-problem: `lora_qkv` regressed 10 and gained 12 — genuine two-way improvement.
 prefix nvt=16 regressed 27 / gained 9; nvt=64 regressed 59 / gained 5.
@@ -488,8 +497,10 @@ attention rather than adding learning capacity.
 
 **Takeaway**: at matched parameter budgets LoRA beats prefix on both security and utility, and
 LoRA on `qkv_proj` alone reproduces the paper's utility gain (+1.22 vs +1.42). H1 and H2 are both
-falsified — but **only at prefix sizes above SVEN's design range** (16 and 64 against SVEN's 5–12).
-Until `nvt=8` is measured (§13.5), the claim is about these settings, not about prefix tuning.
+falsified at nvt=16 and 64 — but those sizes exceed SVEN's design range (5–12), and at SVEN's
+scale (nvt=8) prefix recovers to −4.27, matching LoRA all-linear on half the parameters. The
+prefix-vs-LoRA gap is real but far smaller than the first measurement suggested, and the two
+remaining security corners (`lora_qkv`, `prefix_nvt8`) decide the final picture.
 
 ---|---|---|---|
 | Security: Vulnerable Ratio ↓ (avg 5 langs) | 45.21% | **40.54%** | **−4.67** ✅ |
