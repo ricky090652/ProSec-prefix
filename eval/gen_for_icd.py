@@ -15,6 +15,7 @@
 """
 import argparse
 import json
+import os
 import re
 
 import torch
@@ -77,6 +78,15 @@ def main():
     args = ap.parse_args()
     if args.seed is not None and args.seed < 0:
         args.seed = None
+
+    # 新開的 tmux pane 不會繼承 export，$ICD 為空時路徑會變成 /CybersecurityBenchmarks/...
+    # 直接噴 FileNotFoundError 看不出原因，所以先擋下來講清楚。
+    if not os.path.exists(args.instruct_json):
+        hint = ("（路徑以 / 開頭 —— 看起來 $ICD 是空的。新開的 shell 要重新 export，"
+                "或寫進 ~/.bashrc）" if args.instruct_json.startswith("/Cyber") else "")
+        raise SystemExit(f"找不到 instruct.json：{args.instruct_json}{hint}\n"
+                         "  export ICD=~/<你的路徑>/ProSec/PurpleLlama")
+
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tokenizer = AutoTokenizer.from_pretrained(args.model)
