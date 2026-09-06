@@ -73,6 +73,12 @@ def main():
                     help="取樣種子。不設(--seed -1)則每次結果不同——"
                          "base(OFF) 實測會漂移約 1 個百分點，小效果會被雜訊蓋掉")
     ap.add_argument("--out_prefix", default="./outputs/icd_phi3")
+    ap.add_argument("--sides", choices=["both", "on", "off"], default="both",
+                    help="要生成哪一側。OFF 是關掉 adapter 的 base model，**與 adapter 無關**，"
+                         "所以多個臂共用同一份即可（實測四臂的 OFF 逐項相同）。"
+                         "全量評測時先用 --sides off 生一次，各臂再用 --sides on，"
+                         "生成量直接減半。逐題 seed 只取決於 --seed 與題目順序，"
+                         "所以分開生成與一起生成的配對關係完全相同")
     ap.add_argument("--system_prompt", default=None,
                     help="套進 chat template 的 system 訊息。**必須與訓練時一致**：用 --system_prompt 訓練出來的 adapter，評測時不給就會 OOD。ProSec 論文管線用的是 \"You are helpful coding assistant.\"；早期的 prefix 實驗訓練時沒有 system prompt，那些要維持不給")
     args = ap.parse_args()
@@ -148,8 +154,10 @@ def main():
                              and len(new) >= args.max_new_tokens)
         return texts, truncated
 
-    f_on = open(f"{args.out_prefix}.on.jsonl", "w")
-    f_off = open(f"{args.out_prefix}.off.jsonl", "w")
+    want_on = args.sides in ("both", "on")
+    want_off = args.sides in ("both", "off")
+    f_on = open(f"{args.out_prefix}.on.jsonl", "w") if want_on else None
+    f_off = open(f"{args.out_prefix}.off.jsonl", "w") if want_off else None
     try:
         for i, x in enumerate(data, 1):
             prompt = x["test_case_prompt"]
@@ -157,12 +165,14 @@ def main():
             # 同一題的 ON / OFF 用同一個 seed
             qseed = None if args.seed is None else args.seed * 100003 + i
             # prefix ON
-            resp_on, trunc_on = gen(prompt, qseed)
-            # prefix OFF = base
-            with model.disable_adapter():
-                resp_off, trunc_off = gen(prompt, qseed)
-            for f, resp, trunc in ((f_on, resp_on, trunc_on),
-                                   (f_off, resp_off, trunc_off)):
+            pairs = []
+            if want_on:
+                pairs.append((f_on, *gen(prompt, qseed)))
+            if want_off:
+                # OFF = 關掉 adapter 的 base model
+                with model.disable_adapter():
+                    pairs.append((f_off, *gen(prompt, qseed)))
+            for f, resp, trunc in pairs:
                 f.write(json.dumps({
                     "lang": x["language"], "cwe": cwe, "prompt": prompt, "responses": resp,
                     "truncated": trunc, "max_new_tokens": args.max_new_tokens,
@@ -171,9 +181,12 @@ def main():
             if i % 10 == 0:
                 print(f"  {i}/{len(data)}")
     finally:
-        f_on.close()
-        f_off.close()
-    print(f"完成 → {args.out_prefix}.on.jsonl / .off.jsonl")
+        for f in (f_on, f_off):
+            if f is not None:
+                f.close()
+    made = " / ".join(f"{args.out_prefix}.{s}.jsonl"
+                      for s in (("on",) if want_on else ()) + (("off",) if want_off else ()))
+    print(f"完成 → {made}")
 
 
 if __name__ == "__main__":
