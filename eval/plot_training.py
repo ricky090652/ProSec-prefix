@@ -70,6 +70,10 @@ def main():
                     help=f"另外把每個 run 的曲線存成 csv。不給值時用 {FIG_DIR}/data/")
     ap.add_argument("--smooth", type=int, default=1,
                     help="移動平均的視窗（記錄點數）。1=不平滑")
+    ap.add_argument("--logging_steps", type=int, default=5,
+                    help="HF Trainer **印到 stdout 的 dict 裡沒有 step 欄位**（只有 "
+                         "trainer_state.json 有），讀 .log 時要靠它把記錄編號換算回 "
+                         "optimizer step。train_prefix.py 固定用 5")
     ap.add_argument("--dpi", type=int, default=150)
     args = ap.parse_args()
 
@@ -96,11 +100,15 @@ def main():
     if not runs:
         sys.exit("沒有可畫的資料")
 
+    # .log 的 dict 沒有 step，trainer_state.json 有。缺的時候用
+    # 記錄編號 × logging_steps 換算，否則 x 軸會變成 1..160 而不是 5..800。
+    has_step = any("step" in r for _, rec in runs for r in rec)
+
     def series(records, key):
         xs, ys = [], []
-        for r in records:
+        for i, r in enumerate(records):
             if key in r and isinstance(r[key], (int, float)):
-                xs.append(r.get("step", len(xs) + 1))
+                xs.append(r["step"] if "step" in r else (i + 1) * args.logging_steps)
                 ys.append(r[key])
         if args.smooth > 1 and len(ys) >= args.smooth:
             w = args.smooth
@@ -138,7 +146,12 @@ def main():
             ax.text(0.5, 0.5, f"(no {key})", ha="center", va="center",
                     transform=ax.transAxes, color="grey")
     axes.ravel()[0].legend(fontsize=9)
-    fig.suptitle("Training dynamics", fontsize=13)
+    sub = ("" if has_step else
+           f"  (step inferred as record index x logging_steps={args.logging_steps})")
+    fig.suptitle("Training dynamics" + sub, fontsize=13)
+    if not has_step:
+        print(f"註：log 檔沒有 step 欄位，x 軸用 記錄編號 × {args.logging_steps} 換算"
+              f"（train_prefix.py 的 logging_steps 是 5）")
     fig.tight_layout()
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
     fig.savefig(args.out, dpi=args.dpi)
