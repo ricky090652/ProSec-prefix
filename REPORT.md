@@ -611,7 +611,7 @@ of this line expected influence selection to recover the cost; retracted — see
 | `eval/run_humaneval.py` | HumanEval pass@1 (ON vs OFF); `--dump` saves per-problem generations |
 | `eval/run_multipl_e.py` | MultiPL-E pass@1 for js / cpp / java |
 | `eval/filter_truncated.py` | Drop responses that hit `max_new_tokens` from ON and OFF together |
-| `eval/plot_training.py` | Plot the training curves of several runs on one figure |
+| `eval/plot_training.py` | Plot the training curves of several runs on one figure; writes to `outputs/figures/` |
 | `scripts/verify_arms.py` | Check each arm's config, parameter count and training hyperparameters |
 | `scripts/run_dpo_arms.sh` · `run_param_matched.sh` · `run_sven_scale.sh` | The training arms |
 | `scripts/run_full_eval.sh` | Paper-aligned security eval, 693 × 10 × 5 languages, resumable |

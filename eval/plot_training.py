@@ -6,12 +6,19 @@ train_prefix.py 的 stdout log，或 checkpoint 裡的 trainer_state.json。
 畫六格：loss / rewards 的 chosen、rejected、margins / accuracies / grad_norm。
 grad_norm 用對數軸——實測範圍從個位數到 92,320，線性軸會把所有細節壓成一條線。
 
-用法：
-  python eval/plot_training.py outputs/dpo-arms/*.log --out outputs/training_curves.png
+圖一律存到 outputs/figures/（--out 只給檔名時會自動放進去），
+與 outputs/ 底下大量的 jsonl / log 分開，找圖時不用翻。
 
-  # 只畫 prefix 的三個尺寸，並輸出資料
+用法：
+  python eval/plot_training.py outputs/dpo-arms/*.log
+  # → outputs/figures/training_curves.png
+
+  # 只給檔名，一樣進 outputs/figures/
   python eval/plot_training.py outputs/dpo-arms/prefix{,_nvt8,_nvt64}.log \\
-      --out outputs/prefix_sizes.png --csv_dir outputs/curves
+      --out prefix_sizes.png --csv_dir
+
+  # 要放別的地方就給完整路徑
+  python eval/plot_training.py outputs/dpo-arms/*.log --out ~/paper/fig3.png
 """
 import argparse
 import csv
@@ -24,6 +31,9 @@ _spec = importlib.util.spec_from_file_location(
 _cls = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_cls)
 parse_log = _cls.parse_log
+
+# 圖與其資料的預設落點。跟 outputs/ 底下的 jsonl / log 分開放。
+FIG_DIR = os.environ.get("FIG_DIR", "outputs/figures")
 
 # (metric key, 標題, 是否對數軸, 越大越好?)
 # 標題一律用英文：matplotlib 的預設字體沒有 CJK 字形，中文會變成方塊，
@@ -53,12 +63,21 @@ def label_of(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("logs", nargs="+", help="train_prefix.py 的 log 或 trainer_state.json")
-    ap.add_argument("--out", default="outputs/training_curves.png")
-    ap.add_argument("--csv_dir", default=None, help="另外把每個 run 的曲線存成 csv")
+    ap.add_argument("--out", default="training_curves.png",
+                    help=f"輸出檔名。只給檔名時放進 {FIG_DIR}/；"
+                         "給含目錄的路徑則照給的位置")
+    ap.add_argument("--csv_dir", nargs="?", const="", default=None,
+                    help=f"另外把每個 run 的曲線存成 csv。不給值時用 {FIG_DIR}/data/")
     ap.add_argument("--smooth", type=int, default=1,
                     help="移動平均的視窗（記錄點數）。1=不平滑")
     ap.add_argument("--dpi", type=int, default=150)
     args = ap.parse_args()
+
+    # 只給檔名 → 放進 FIG_DIR；給了目錄就尊重使用者的路徑
+    if os.path.dirname(args.out) == "":
+        args.out = os.path.join(FIG_DIR, args.out)
+    if args.csv_dir == "":
+        args.csv_dir = os.path.join(FIG_DIR, "data")
 
     try:
         import matplotlib
