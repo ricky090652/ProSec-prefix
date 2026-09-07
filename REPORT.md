@@ -373,13 +373,30 @@ the paper's, though at roughly a third the magnitude (+1.03 against +2.77).
 
 ### 13.3b The two axes do not reproduce together
 
-| Arm | Security Δ (5-lang avg) | Utility Δ (3-lang avg) | Gate | Pareto |
+| Arm | Security Δ (5-lang avg) | Utility Δ (3-lang avg) | Gate | Non-dominated |
 |---|---|---|---|---|
-| **LoRA all-linear** | **−14.24** | −4.12 | ⚠️ py fails | ✅ front |
-| **LoRA `qkv_proj`** | −2.58 | **+1.03** | ✅ all pass | ✅ front |
-| prefix nvt=16 | −6.04 | −16.91 | ❌ fails | ❌ dominated |
-| prefix nvt=8 | −3.00 | −7.22 | ✅ all pass | ❌ dominated |
+| **LoRA all-linear** | **−14.24** | −4.12 | ⚠️ py fails | ✅ |
+| **LoRA `qkv_proj`** | −2.58 | **+1.03** | ✅ all pass | ✅ |
+| prefix nvt=16 | −6.04 | −16.91 | ❌ fails | ❌ |
+| prefix nvt=8 | −3.00 | −7.22 | ✅ all pass | ❌ (see below) |
 | *paper (SimPO)* | *−17.10* | *+2.77* | *—* | *—* |
+
+Measurement precision differs sharply between the axes: security is 693 × 10 = 6,930 responses
+per arm (SE ≈ 0.60 pt) while utility is 486 problems (SE ≈ 2.23 pt), so the same absolute gap
+means very different things on the two.
+
+The last column is **not a measurement** — it is Pareto dominance derived from the two columns
+to its left (A dominates B when A is no worse on either axis and strictly better on one). Report
+it with the margins, because they are not comparable:
+
+| Claim | Security gap | Utility gap |
+|---|---|---|
+| all-linear over prefix nvt=16 | 8.20 pt (13.8 SE) | 12.79 pt (5.7 SE) |
+| all-linear over prefix nvt=8 | 11.24 pt (18.9 SE) | 3.10 pt (**1.4 SE**) |
+
+The second claim rests half on a utility gap that is not statistically separable. The accurate
+phrasing is: **all-linear and prefix nvt=8 cost indistinguishable utility, and all-linear is
+11.24 points more secure (18.9 SE)** — which carries the same conclusion without overstating.
 
 The paper reports both at once. We get each from a different configuration: `all-linear`
 reproduces the security (33.70 against 33.47) at a utility cost, `qkv_proj` reproduces the
