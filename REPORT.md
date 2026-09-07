@@ -355,8 +355,44 @@ Phi-3-mini-4k-instruct has 3,821,079,552 parameters. Prefix tuning trains
 
 ### 13.3 Results
 
-**Utility — HumanEval pass@1, greedy, 164 problems, `max_new_tokens 2048`, zero truncation
-except where noted. Base (OFF) is 70.73% for all four arms.**
+**Utility — pass@1 across three of the paper's four HumanEval-Multi columns (Java pending a JDK
+and the javatuples jar). Python is the original HumanEval (164 problems); JS and C++ are
+MultiPL-E (161 each). Greedy, `max_new_tokens 2048`.**
+
+| Arm | C++ | JS | PY | **Avg Δ** |
+|---|---|---|---|---|
+| OFF (base) | 46.58 | 59.63 | 70.73 | — |
+| LoRA all-linear | −10.56 | +2.48 | −4.27 | **−4.12** |
+| **LoRA `qkv_proj`** | −2.48 | **+4.35** | **+1.22** | **+1.03** ✅ |
+| prefix nvt=16 | −22.98 | −16.77 | −10.98 | **−16.91** |
+| prefix nvt=8 | −9.31 | −8.08 | −4.27 | −7.22 |
+| *paper w/ ProSec (SimPO)* | *+2.44* | *+0.98* | *+4.89* | *+2.77* |
+
+`lora_qkv` is the only arm that keeps utility positive, and it is the only one whose sign matches
+the paper's, though at roughly a third the magnitude (+1.03 against +2.77).
+
+### 13.3b The two axes do not reproduce together
+
+| Arm | Security Δ (5-lang avg) | Utility Δ (3-lang avg) | Gate | Pareto |
+|---|---|---|---|---|
+| **LoRA all-linear** | **−14.24** | −4.12 | ⚠️ py fails | ✅ front |
+| **LoRA `qkv_proj`** | −2.58 | **+1.03** | ✅ all pass | ✅ front |
+| prefix nvt=16 | −6.04 | −16.91 | ❌ fails | ❌ dominated |
+| prefix nvt=8 | −3.00 | −7.22 | ✅ all pass | ❌ dominated |
+| *paper (SimPO)* | *−17.10* | *+2.77* | *—* | *—* |
+
+The paper reports both at once. We get each from a different configuration: `all-linear`
+reproduces the security (33.70 against 33.47) at a utility cost, `qkv_proj` reproduces the
+utility direction with a fifth of the security. Since the paper never states its LoRA target
+modules, the setting that achieves both plausibly lies between the two — attention-only
+(`qkv_proj` + `o_proj`, 4.7M) or MLP-only (`gate_up_proj` + `down_proj`, 7.9M) are the natural
+probes, and the per-CWE evidence points at the MLP: on CWE-338, the archetypal
+"use `secrets` not `random`" substitution, all-linear moves the rate by 22.13 points against
+qkv's 1.27.
+
+### 13.3c Original utility table (Python only, for reference)
+
+**Python-only, base 70.73% for all four arms:**
 
 | | 1.57M (0.041%) | 3.1M (0.082%) | 12.6M (0.329%) |
 |---|---|---|---|
@@ -511,11 +547,15 @@ attention rather than adding learning capacity.
 
 | Arm | Trainable | Security Δ ↓ | Utility Δ ↑ | Degeneration gate | Pareto |
 |---|---|---|---|---|---|
-| **LoRA all-linear** | 12.6M | **−14.24** | −4.27 | ⚠️ python fails (−5.07) | ✅ front |
-| **LoRA `qkv_proj`** | 3.15M | −2.58 | **+1.22** | ✅ all pass | ✅ front |
-| prefix nvt=16 | 3.15M | −6.04 | −10.98 | ❌ fails (−3.76) | ❌ dominated |
-| prefix nvt=8 | 1.57M | −3.00 | −4.27 | ✅ all pass | ❌ dominated |
-| *paper (SimPO)* | *12.6M?* | *−17.10* | *+1.76* | *—* | *—* |
+| **LoRA all-linear** | 12.6M | **−14.24** | −4.12 | ⚠️ python fails (−5.07) | ✅ front |
+| **LoRA `qkv_proj`** | 3.15M | −2.58 | **+1.03** | ✅ all pass | ✅ front |
+| prefix nvt=16 | 3.15M | −6.04 | −16.91 | ❌ fails (−3.76) | ❌ dominated |
+| prefix nvt=8 | 1.57M | −3.00 | −7.22 | ✅ all pass | ❌ dominated |
+| *paper (SimPO)* | *unstated* | *−17.10* | *+2.77* | *—* | *—* |
+
+Security is the five-language average over 693 × 10; utility is the average over C++, JS and
+Python (Java pending). Paper figures are its four-column averages restricted to the same
+three languages where applicable.
 
 **Takeaway**: on the paper's own evaluation, LoRA all-linear lands at 33.70 against ProSec's
 33.47 — the security result reproduces, with DPO rather than SimPO. No prefix arm reaches the
