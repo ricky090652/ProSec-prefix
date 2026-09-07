@@ -1,0 +1,1047 @@
+<title>Prefix-ProSec Progress Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap">
+
+<style>
+:root{
+  --paper:#eef1ef; --surface:#ffffff; --surface-2:#e3e9e6; --sunk:#e7ecea;
+  --ink:#141b1a; --ink-2:#495652; --ink-3:#6f7e7a;
+  --rule:#ccd6d2; --rule-2:#dde4e1;
+  --teal:#0c6a5f; --teal-soft:#d2e7e2;
+  --rust:#a63d2a; --rust-soft:#f5dcd5;
+  --ochre:#906312; --ochre-soft:#f1e5c6;
+  --violet:#5a4b8c; --violet-soft:#e2ddf0;
+  --font-display:"Newsreader",Georgia,serif;
+  --font-body:"IBM Plex Sans",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0a0f0e; --surface:#131a18; --surface-2:#1b2422; --sunk:#0f1614;
+    --ink:#e1e8e5; --ink-2:#a2b0ac; --ink-3:#7b8985;
+    --rule:#28322f; --rule-2:#1f2926;
+    --teal:#5bd0bd; --teal-soft:#12332f;
+    --rust:#f0917a; --rust-soft:#391d17;
+    --ochre:#dcae55; --ochre-soft:#32270f;
+    --violet:#b3a6e0; --violet-soft:#231d3a;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0a0f0e; --surface:#131a18; --surface-2:#1b2422; --sunk:#0f1614;
+  --ink:#e1e8e5; --ink-2:#a2b0ac; --ink-3:#7b8985;
+  --rule:#28322f; --rule-2:#1f2926;
+  --teal:#5bd0bd; --teal-soft:#12332f;
+  --rust:#f0917a; --rust-soft:#391d17;
+  --ochre:#dcae55; --ochre-soft:#32270f;
+  --violet:#b3a6e0; --violet-soft:#231d3a;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:var(--font-body); -webkit-font-smoothing:antialiased;
+  display:flex; flex-direction:column; align-items:center;
+  min-height:100vh; overflow:hidden;
+}
+
+#stage{
+  position:relative;
+  width:min(100vw, calc((100vh - 56px) * 16 / 9));
+  aspect-ratio:16/9;
+  container-type:size;
+  background:var(--surface);
+  border:1px solid var(--rule);
+  overflow:hidden;
+  margin-top:8px;
+}
+.slide{position:absolute; inset:0; padding:3.6cqw 4.6cqw 3.2cqw; display:none; flex-direction:column}
+.slide.on{display:flex}
+.fit{flex:1; min-height:0; display:flex; flex-direction:column; transform-origin:top left}
+.title-slide .fit{justify-content:center}
+
+.eyebrow{
+  font-family:var(--font-mono); font-size:1.14cqw; letter-spacing:.2em;
+  text-transform:uppercase; color:var(--teal); margin-bottom:.8cqw;
+  display:flex; gap:1.4cqw; align-items:baseline;
+}
+.eyebrow .dim{color:var(--ink-3); letter-spacing:.14em}
+h1{
+  font-family:var(--font-display); font-weight:600; font-size:3.0cqw; line-height:1.14;
+  margin:0 0 1.05cqw; letter-spacing:-.012em; text-wrap:balance;
+}
+h1.big{font-size:5cqw}
+h2{font-family:var(--font-body); font-weight:600; font-size:1.5cqw; margin:0 0 .5cqw}
+.sub{font-size:1.34cqw; color:var(--ink-2); line-height:1.5; margin:0 0 .85cqw; max-width:80ch}
+.body{flex:1; min-height:0; display:flex; flex-direction:column; gap:.85cqw}
+
+ul{margin:0; padding-left:1.5cqw; font-size:1.36cqw; line-height:1.46}
+ul.tight{font-size:1.22cqw; line-height:1.4}
+li{margin-bottom:.42cqw}
+li::marker{color:var(--teal)}
+strong,b{font-weight:600}
+code{font-family:var(--font-mono); font-size:.86em; background:var(--surface-2); padding:.05em .3em; border-radius:.25em}
+em{font-style:italic}
+.good{color:var(--teal); font-weight:600}
+.bad{color:var(--rust); font-weight:600}
+.warn{color:var(--ochre); font-weight:600}
+.vio{color:var(--violet); font-weight:600}
+s{opacity:.6}
+
+.cols{display:grid; gap:1.05cqw; flex:1; min-height:0}
+.cols > *{min-width:0}
+.c2{grid-template-columns:1fr 1fr}
+.c3{grid-template-columns:repeat(3,1fr)}
+.c2u{grid-template-columns:1.15fr .85fr}
+.c2v{grid-template-columns:.8fr 1.2fr}
+
+.box{
+  background:var(--sunk); border:1px solid var(--rule-2); border-radius:.5cqw;
+  padding:1.02cqw 1.22cqw; display:flex; flex-direction:column; gap:.34cqw;
+}
+.box.t{border-color:var(--teal); background:var(--teal-soft)}
+.box.r{border-color:var(--rust); background:var(--rust-soft)}
+.box.o{border-color:var(--ochre); background:var(--ochre-soft)}
+.box.v{border-color:var(--violet); background:var(--violet-soft)}
+.box .k{font-family:var(--font-mono); font-size:.95cqw; letter-spacing:.13em; text-transform:uppercase; color:var(--ink-3)}
+.box.t .k{color:var(--teal)} .box.r .k{color:var(--rust)}
+.box.o .k{color:var(--ochre)} .box.v .k{color:var(--violet)}
+.box h3{margin:0; font-size:1.36cqw; font-weight:600; font-family:var(--font-body); line-height:1.24}
+.box p{margin:0; font-size:1.18cqw; line-height:1.42; color:var(--ink-2)}
+.box p b{color:var(--ink)}
+.box ul{font-size:1.18cqw; line-height:1.42; padding-left:1.2cqw}
+
+table{border-collapse:collapse; width:100%; font-size:1.15cqw}
+th,td{padding:.34cqw .56cqw; text-align:left; border-bottom:1px solid var(--rule-2); line-height:1.34}
+thead th{
+  font-family:var(--font-mono); font-size:.9cqw; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--ink-3); background:var(--sunk); border-bottom:1px solid var(--rule); font-weight:600; white-space:nowrap;
+}
+tbody tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right; font-family:var(--font-mono); font-variant-numeric:tabular-nums; white-space:nowrap}
+td.mono{font-family:var(--font-mono); font-size:1.04cqw; white-space:nowrap}
+tr.hl td{background:var(--teal-soft); font-weight:600}
+tr.dim td{color:var(--ink-3)}
+
+.eq{
+  background:var(--sunk); border:1px solid var(--rule-2); border-radius:.4cqw;
+  padding:.72cqw 1cqw; font-family:var(--font-mono); font-size:1.08cqw; line-height:1.6; overflow:hidden;
+}
+.eq.lg{font-size:1.22cqw; line-height:1.8}
+.eq .cm{color:var(--ink-3)}
+.eq .hi{color:var(--teal); font-weight:600}
+.eq .hi2{color:var(--rust); font-weight:600}
+
+figure{margin:0; flex:1; min-height:0; display:flex; flex-direction:column; justify-content:center}
+figure svg{display:block; width:100%; height:auto; max-height:100%; font-family:var(--font-body)}
+figcaption{font-size:1.08cqw; color:var(--ink-2); margin-top:.55cqw; line-height:1.4; border-top:1px solid var(--rule-2); padding-top:.42cqw}
+figcaption b{color:var(--ink); font-weight:600}
+
+.call{border-left:.3cqw solid var(--teal); background:var(--sunk); padding:.7cqw 1cqw; font-size:1.2cqw; line-height:1.42}
+.call.r{border-left-color:var(--rust)}
+.call.o{border-left-color:var(--ochre)}
+.call.v{border-left-color:var(--violet)}
+.call .k{display:block; font-family:var(--font-mono); font-size:.9cqw; letter-spacing:.12em; text-transform:uppercase; color:var(--teal); margin-bottom:.22cqw; font-weight:600}
+.call.r .k{color:var(--rust)} .call.o .k{color:var(--ochre)} .call.v .k{color:var(--violet)}
+
+.chip{display:inline-flex; align-items:center; font-family:var(--font-mono); font-size:.98cqw; letter-spacing:.05em; padding:.08cqw .5cqw; border-radius:2cqw; border:1px solid}
+.chip.done{color:var(--teal); border-color:var(--teal); background:var(--teal-soft)}
+.chip.now{color:var(--ochre); border-color:var(--ochre); background:var(--ochre-soft)}
+.chip.dead{color:var(--rust); border-color:var(--rust); background:var(--rust-soft)}
+
+.title-slide{justify-content:center}
+.title-slide .rule{width:9cqw; height:.3cqw; background:var(--teal); margin-bottom:2cqw}
+.title-slide .meta{display:flex; gap:2.2cqw; flex-wrap:wrap; margin-top:2.2cqw; font-family:var(--font-mono); font-size:1.18cqw; color:var(--ink-3)}
+.title-slide .meta b{color:var(--ink); font-weight:600}
+
+#bar{
+  width:min(100vw, calc((100vh - 56px) * 16 / 9));
+  display:flex; align-items:center; gap:14px; padding:8px 4px 0;
+  font-family:var(--font-mono); font-size:12px; color:var(--ink-3);
+}
+#bar .track{flex:1; height:3px; background:var(--rule); border-radius:2px; overflow:hidden}
+#bar .fill{height:100%; background:var(--teal); width:0; transition:width .18s ease}
+#bar button{font:inherit; font-size:12px; color:var(--ink-2); background:var(--surface); border:1px solid var(--rule); border-radius:3px; padding:3px 10px; cursor:pointer}
+#bar button:hover{color:var(--ink); border-color:var(--teal)}
+#bar button:focus-visible{outline:2px solid var(--teal); outline-offset:2px}
+#counter{font-variant-numeric:tabular-nums; min-width:52px}
+
+@media (prefers-reduced-motion:reduce){#bar .fill{transition:none}}
+
+@media print{
+  body{overflow:visible; display:block}
+  #bar{display:none}
+  #stage{width:100%; border:0; margin:0; aspect-ratio:auto; container-type:normal}
+  .slide{display:flex!important; position:relative; inset:auto; break-after:page; height:100vh; padding:40px 48px}
+  .eyebrow{font-size:11px} h1{font-size:29px} h1.big{font-size:42px}
+  .sub,ul{font-size:14px} .box h3{font-size:15px} .box p,.box ul{font-size:13px}
+  table{font-size:12px} .eq{font-size:12px} figcaption{font-size:11px} .call{font-size:13px}
+}
+</style>
+
+<div id="stage">
+
+<!-- 01 -->
+<section class="slide title-slide">
+  <div class="fit">
+  <div class="rule"></div>
+  <div class="eyebrow"><span>Progress Review</span><span class="dim">2026-09-03</span></div>
+  <h1 class="big">Prefix-ProSec</h1>
+  <p class="sub" style="font-size:1.9cqw; max-width:56ch">A pluggable security module for code LLMs —<br>ProSec's data and pipeline, with a prefix in place of LoRA.</p>
+  <div class="meta">
+    <span>Phi-3-mini-4k-instruct</span>
+    <span>45,785 preference pairs</span>
+    <span>DPO · β=0.05</span>
+    <span>Both arms trained</span>
+  </div>
+  </div>
+</section>
+
+<!-- 02 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>01 · Motivation</span><span class="dim">how we got here</span></div>
+  <h1>The idea survived; the foundation was replaced</h1>
+  <div class="body">
+<figure>
+      <svg viewBox="0 0 880 250" role="img" aria-label="Project lineage: the original plan was to replace SVEN's method with DPO, but SVEN's models and environment are outdated; the prefix idea was kept and moved onto ProSec's modern data and pipeline, where it replaces LoRA">
+        <defs>
+          <marker id="lnar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+          <marker id="lnarT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--teal)"/></marker>
+        </defs>
+
+        <rect x="14" y="16" width="372" height="94" rx="5" fill="var(--surface)" stroke="var(--rule)" stroke-width="1.4"/>
+        <text x="28" y="36" font-size="12.5" font-weight="600" fill="currentColor">SVEN (2023) — where we started</text>
+        <text x="28" y="56" font-size="10.5" fill="var(--teal)">✔ prefix tuning steers a security property</text>
+        <text x="28" y="72" font-size="10.5" fill="var(--teal)">✔ freezes the base model entirely</text>
+        <text x="28" y="88" font-size="10.5" fill="var(--rust)">✘ CodeGen (2022), torch 1.13 — almost nothing reusable</text>
+        <text x="28" y="104" font-size="10.5" fill="var(--rust)">✘ real-world GitHub-commit data, small and noisy</text>
+
+        <rect x="494" y="16" width="372" height="94" rx="5" fill="var(--surface)" stroke="var(--rule)" stroke-width="1.4"/>
+        <text x="508" y="36" font-size="12.5" font-weight="600" fill="currentColor">ProSec (2025) — where we moved</text>
+        <text x="508" y="56" font-size="10.5" fill="var(--teal)">✔ proactively synthesized vulnerability data</text>
+        <text x="508" y="72" font-size="10.5" fill="var(--teal)">✔ static analyzer as the labelling oracle</text>
+        <text x="508" y="88" font-size="10.5" fill="var(--teal)">✔ preference optimization on a modern model</text>
+        <text x="508" y="104" font-size="10.5" fill="var(--ochre)">— adapts with <tspan font-weight="600">LoRA</tspan></text>
+
+        <path d="M200 114 L330 152" stroke="var(--teal)" stroke-width="2" fill="none" marker-end="url(#lnarT)"/>
+        <text x="196" y="140" font-size="10.5" font-weight="600" fill="var(--teal)">keep the idea</text>
+
+        <path d="M680 114 L550 152" stroke="currentColor" stroke-width="2" fill="none" marker-end="url(#lnar)"/>
+        <text x="618" y="140" font-size="10.5" font-weight="600" fill="currentColor">move onto the foundation</text>
+
+        <rect x="150" y="158" width="580" height="72" rx="5" fill="var(--teal-soft)" stroke="var(--teal)" stroke-width="1.8"/>
+        <text x="440" y="180" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">This work — ProSec's data and pipeline, with a <tspan fill="var(--teal)">prefix instead of LoRA</tspan></text>
+        <text x="440" y="200" text-anchor="middle" font-size="10.5" fill="currentColor">Phi-3-mini-4k-instruct · transformers 4.46 · PEFT 0.19 · TRL 0.12</text>
+        <text x="440" y="219" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--teal)">Everything except the PEFT method is held fixed, so the difference is attributable.</text>
+      </svg>
+      <figcaption><b>SVEN had the idea but a stack two generations old; ProSec had the data, the analyzer oracle and a current model — but uses LoRA.</b></figcaption>
+    </figure>
+  </div>
+  </div>
+</section>
+
+<!-- 03 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>02 · The change</span><span class="dim">prefix vs LoRA</span></div>
+  <h1>Where each one enters the model</h1>
+  <div class="body">
+<figure>
+      <svg viewBox="0 0 880 250" role="img" aria-label="Injection points: LoRA adds a low-rank delta to the weight matrices with its gradient returning along the residual path, while a prefix prepends virtual tokens to the key-value sequence and can only act through softmax attention weights">
+        <defs>
+          <marker id="s7ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+          <marker id="s7arv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--violet)"/></marker>
+          <marker id="s7art" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--teal)"/></marker>
+        </defs>
+        <line x1="440" y1="10" x2="440" y2="240" stroke="var(--rule)" stroke-width="1" stroke-dasharray="4 4"/>
+        <text x="20" y="22" font-size="12.5" font-weight="600" fill="var(--violet)">LoRA — into the weights</text>
+        <rect x="20" y="34" width="392" height="150" rx="5" fill="var(--surface)" stroke="var(--rule)" stroke-width="1.2"/>
+        <rect x="38" y="66" width="66" height="28" rx="3" fill="var(--sunk)" stroke="currentColor" stroke-width="1"/>
+        <text x="71" y="85" text-anchor="middle" font-size="10.5" fill="currentColor">hidden h</text>
+        <path d="M108 80 L142 80" stroke="currentColor" stroke-width="1.3" marker-end="url(#s7ar)"/>
+        <rect x="146" y="60" width="86" height="40" rx="3" fill="var(--sunk)" stroke="var(--ink-3)" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="189" y="77" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">W_qkv,o,mlp ❄</text>
+        <text x="189" y="92" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">frozen</text>
+        <rect x="146" y="118" width="86" height="40" rx="3" fill="var(--violet-soft)" stroke="var(--violet)" stroke-width="1.5"/>
+        <text x="189" y="135" text-anchor="middle" font-size="11" font-weight="600" fill="var(--violet)">ΔW = BA</text>
+        <text x="189" y="150" text-anchor="middle" font-size="9.5" fill="var(--violet)">× alpha/r = 2</text>
+        <path d="M189 114 L189 104" stroke="var(--violet)" stroke-width="1.5" marker-end="url(#s7arv)"/>
+        <text x="238" y="114" font-size="10" fill="var(--violet)">added directly</text>
+        <path d="M236 80 L276 80" stroke="currentColor" stroke-width="1.3" marker-end="url(#s7ar)"/>
+        <rect x="280" y="60" width="106" height="40" rx="3" fill="var(--surface-2)" stroke="currentColor" stroke-width="1"/>
+        <text x="333" y="84" text-anchor="middle" font-size="10.5" fill="currentColor">attention output</text>
+        <path d="M333 158 L333 106" stroke="var(--violet)" stroke-width="2" stroke-dasharray="6 3" fill="none" marker-end="url(#s7arv)"/>
+        <text x="333" y="174" text-anchor="middle" font-size="10" font-weight="600" fill="var(--violet)">gradient returns along the residual</text>
+        <text x="20" y="204" font-size="10.5" fill="currentColor">literature lr <tspan font-family="var(--font-mono)" font-weight="600">1e-4 ~ 5e-4</tspan> — <tspan fill="var(--ink-3)">measured best here: 5e-6 under DPO</tspan></text>
+        <text x="20" y="222" font-size="10.5" fill="var(--ink-3)">switching adapters needs merge / unmerge</text>
+
+        <text x="466" y="22" font-size="12.5" font-weight="600" fill="var(--teal)">Prefix — into the sequence</text>
+        <rect x="466" y="34" width="394" height="150" rx="5" fill="var(--surface)" stroke="var(--rule)" stroke-width="1.2"/>
+        <text x="480" y="60" font-size="10" fill="var(--ink-3)">key / value sequence</text>
+        <rect x="480" y="66" width="15" height="24" rx="2" fill="var(--teal)"/>
+        <rect x="498" y="66" width="15" height="24" rx="2" fill="var(--teal)"/>
+        <rect x="516" y="66" width="15" height="24" rx="2" fill="var(--teal)"/>
+        <text x="505" y="106" text-anchor="middle" font-size="9.5" font-weight="600" fill="var(--teal)">16 virtual tokens</text>
+        <rect x="540" y="66" width="11" height="24" rx="2" fill="var(--surface-2)" stroke="var(--ink-3)" stroke-width=".8"/>
+        <rect x="554" y="66" width="11" height="24" rx="2" fill="var(--surface-2)" stroke="var(--ink-3)" stroke-width=".8"/>
+        <rect x="568" y="66" width="11" height="24" rx="2" fill="var(--surface-2)" stroke="var(--ink-3)" stroke-width=".8"/>
+        <rect x="582" y="66" width="11" height="24" rx="2" fill="var(--surface-2)" stroke="var(--ink-3)" stroke-width=".8"/>
+        <rect x="596" y="66" width="11" height="24" rx="2" fill="var(--surface-2)" stroke="var(--ink-3)" stroke-width=".8"/>
+        <rect x="610" y="66" width="11" height="24" rx="2" fill="var(--surface-2)" stroke="var(--ink-3)" stroke-width=".8"/>
+        <rect x="624" y="66" width="11" height="24" rx="2" fill="var(--surface-2)" stroke="var(--ink-3)" stroke-width=".8"/>
+        <rect x="638" y="66" width="11" height="24" rx="2" fill="var(--surface-2)" stroke="var(--ink-3)" stroke-width=".8"/>
+        <rect x="652" y="66" width="11" height="24" rx="2" fill="var(--surface-2)" stroke="var(--ink-3)" stroke-width=".8"/>
+        <rect x="666" y="66" width="11" height="24" rx="2" fill="var(--surface-2)" stroke="var(--ink-3)" stroke-width=".8"/>
+        <text x="612" y="106" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">hundreds of real context tokens ❄</text>
+        <path d="M688 78 L724 78" stroke="currentColor" stroke-width="1.3" marker-end="url(#s7ar)"/>
+        <rect x="728" y="58" width="106" height="42" rx="3" fill="var(--surface-2)" stroke="currentColor" stroke-width="1"/>
+        <text x="781" y="75" text-anchor="middle" font-size="10.5" fill="currentColor">softmax attention</text>
+        <text x="781" y="90" text-anchor="middle" font-size="10.5" fill="currentColor">→ output</text>
+        <path d="M781 158 L781 106" stroke="var(--teal)" stroke-width="2" stroke-dasharray="6 3" fill="none" marker-end="url(#s7art)"/>
+        <text x="660" y="174" text-anchor="middle" font-size="10" font-weight="600" fill="var(--teal)">gradient only through softmax weights — 16 / (16 + hundreds) of the mass</text>
+        <text x="466" y="204" font-size="10.5" fill="currentColor">literature lr <tspan font-family="var(--font-mono)" font-weight="600">1e-3 ~ 1e-2</tspan> (SFT scale) — <tspan fill="var(--ink-3)">measured best here: 5e-5</tspan></text>
+        <text x="466" y="222" font-size="10.5" fill="var(--ink-3)">switching = swapping past_key_values → ≈ zero cost</text>
+      </svg>
+      <figcaption><b>Because they enter the graph differently, their gradient scales differ by orders of magnitude — so a shared learning rate would not be fairness, it would make one side underfit.</b></figcaption>
+    </figure>
+    <table style="flex:0">
+      <thead><tr><th></th><th>LoRA r=8, all-linear</th><th>Prefix nvt=16</th></tr></thead>
+      <tbody>
+        <tr><td>Trainable parameters</td><td class="num">12,582,912</td><td class="num good">3,145,728</td></tr>
+        <tr><td>Adapter size <span style="color:var(--ink-3)">(bf16, from param count)</span></td><td class="num">≈ 25.2 MB</td><td class="num good">≈ 6.3 MB</td></tr>
+        <tr><td>Acts on</td><td>weight matrices — <code>ΔW = BA</code></td><td>the key/value sequence, every layer</td></tr>
+        <tr><td>Gradient reaches it via</td><td>the residual path, scaled by α/r</td><td>softmax attention weights only</td></tr>
+        <tr class="hl"><td>Best learning rate <span style="color:var(--ink-3)">(measured, equal budget)</span></td><td class="num">5e-6</td><td class="num">5e-5 — <b>10×</b></td></tr>
+        <tr><td>Switching policies</td><td>merge / unmerge weights</td><td class="good">swap <code>past_key_values</code></td></tr>
+        <tr><td>Mixed policies in one batch</td><td>needs special support</td><td class="good">native</td></tr>
+      </tbody>
+    </table>
+  </div>
+  </div>
+</section>
+
+<!-- 04 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>03 · Scope</span><span class="dim">against the paper</span></div>
+  <h1>What we changed, and what we added</h1>
+  <div class="body">
+    <table>
+      <thead><tr><th></th><th>ProSec paper</th><th>This work</th><th>Reason</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td>PEFT method</td><td>LoRA r=8, α=16</td><td><b>Prefix nvt=16</b></td><td>the object of study</td></tr>
+        <tr><td>Objective</td><td>SimPO · β=1.5, γ=0.5</td><td><b>DPO · β=0.05</b></td><td>SimPO destabilized in our runs; the paper's own appendix validates DPO on this data — and the objective is a control variable, shared by both arms</td></tr>
+        <tr><td>Training length</td><td>1500 steps @ batch 64</td><td>800 steps @ batch 64</td><td>≈ 1.1 epoch over 45,785</td></tr>
+        <tr><td>LoRA target modules</td><td>not specified</td><td>all-linear <span class="mono">(qkv, o, gate_up, down)</span></td><td>our assumption — must be declared</td></tr>
+        <tr><td>Eval subset</td><td>38 ⟨lang, CWE⟩ / 694 cases<br><span style="color:var(--ink-3)">never released</span></td><td><b>36 ⟨lang, CWE⟩ / 693 cases</b><br><span style="color:var(--ink-3)">reconstructed</span></td><td>had to be rebuilt from PurpleLlama ∩ SafeCoder</td></tr>
+        <tr class="hl"><td>Generation-quality checks</td><td class="bad">none</td><td class="good"><b>8 checks</b></td><td>the security metric can be faked — slides 12–14</td></tr>
+      </tbody>
+    </table>
+  </div>
+  </div>
+</section>
+
+<!-- 05 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>04 · Data</span><span class="dim">45,785 preference pairs</span></div>
+  <h1>Where the training data comes from</h1>
+  <div class="body">
+<figure>
+      <svg viewBox="0 0 880 290" role="img" aria-label="Data lineage: 50,000 Claude-synthesized vulnerability-inducing instructions split into a task column and an original-prompt column; Phi-3-mini generates code for each, producing D_sec of 27,400 and D_norm of 18,385, and fingerprints show the paper's influence selection has already been applied">
+        <defs>
+          <marker id="s5ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+          <marker id="s5arT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--teal)"/></marker>
+          <marker id="s5arR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--rust)"/></marker>
+        </defs>
+        <rect x="8" y="98" width="176" height="72" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="96" y="120" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">haiku-vul-inducing</text>
+        <text x="96" y="137" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">-instructions-clustered</text>
+        <text x="96" y="157" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">50,000 instructions, no code</text>
+        <text x="96" y="86" text-anchor="middle" font-size="10" fill="var(--ink-3)">Claude-synthesized · model-agnostic</text>
+        <path d="M188 124 L246 74" stroke="var(--teal)" stroke-width="1.6" fill="none" marker-end="url(#s5arT)"/>
+        <path d="M188 150 L246 202" stroke="var(--rust)" stroke-width="1.6" fill="none" marker-end="url(#s5arR)"/>
+        <text x="196" y="94" font-size="10.5" fill="var(--teal)" font-family="var(--font-mono)">task</text>
+        <text x="192" y="190" font-size="10.5" fill="var(--rust)" font-family="var(--font-mono)">original_prompt</text>
+        <rect x="250" y="40" width="196" height="66" rx="4" fill="var(--teal-soft)" stroke="var(--teal)" stroke-width="1.2"/>
+        <text x="348" y="62" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">Phi-3-mini generates</text>
+        <text x="348" y="79" text-anchor="middle" font-size="11" fill="currentColor">vulnerable + fixed code</text>
+        <text x="348" y="96" text-anchor="middle" font-size="10" fill="var(--ink-3)">validated by PurpleLlama detector</text>
+        <rect x="250" y="172" width="196" height="66" rx="4" fill="var(--rust-soft)" stroke="var(--rust)" stroke-width="1.2"/>
+        <text x="348" y="194" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">Phi-3-mini generates</text>
+        <text x="348" y="211" text-anchor="middle" font-size="11" fill="currentColor">normal code, benign task</text>
+        <text x="348" y="228" text-anchor="middle" font-size="10" fill="var(--ink-3)">no security fix applied</text>
+        <path d="M450 73 L508 73" stroke="var(--teal)" stroke-width="1.6" marker-end="url(#s5arT)"/>
+        <path d="M450 205 L508 205" stroke="var(--rust)" stroke-width="1.6" marker-end="url(#s5arR)"/>
+        <rect x="512" y="42" width="180" height="62" rx="4" fill="var(--surface)" stroke="var(--teal)" stroke-width="1.6"/>
+        <text x="602" y="63" text-anchor="middle" font-size="13" font-weight="600" fill="var(--teal)">D_sec · 27,400</text>
+        <text x="602" y="80" text-anchor="middle" font-size="10.5" fill="currentColor">fixed ≻ vulnerable</text>
+        <text x="602" y="96" text-anchor="middle" font-size="10" fill="var(--ink-3)">"write the secure version here"</text>
+        <rect x="512" y="174" width="180" height="62" rx="4" fill="var(--surface)" stroke="var(--rust)" stroke-width="1.6"/>
+        <text x="602" y="195" text-anchor="middle" font-size="13" font-weight="600" fill="var(--rust)">D_norm · 18,385</text>
+        <text x="602" y="212" text-anchor="middle" font-size="10.5" fill="currentColor">normal ≻ over-securitized</text>
+        <text x="602" y="228" text-anchor="middle" font-size="10" fill="var(--ink-3)">"don't over-apply fixes"</text>
+        <path d="M696 73 L740 73 L740 126" stroke="currentColor" stroke-width="1.4" fill="none"/>
+        <path d="M696 205 L740 205 L740 154" stroke="currentColor" stroke-width="1.4" fill="none" marker-end="url(#s5ar)"/>
+        <path d="M740 126 L740 132" stroke="currentColor" stroke-width="1.4" marker-end="url(#s5ar)"/>
+        <rect x="748" y="112" width="124" height="52" rx="4" fill="var(--sunk)" stroke="currentColor" stroke-width="1.4"/>
+        <text x="810" y="133" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">45,785</text>
+        <text x="810" y="150" text-anchor="middle" font-size="10" fill="var(--ink-3)">what we train on</text>
+        <path d="M810 168 L810 202" stroke="var(--teal)" stroke-width="1.4" fill="none" marker-end="url(#s5arT)"/>
+        <rect x="736" y="206" width="140" height="48" rx="4" fill="var(--teal-soft)" stroke="var(--teal)" stroke-width="1.4"/>
+        <text x="806" y="226" text-anchor="middle" font-size="11" font-weight="600" fill="var(--teal)">§3.3 influence</text>
+        <text x="806" y="241" text-anchor="middle" font-size="11" font-weight="600" fill="var(--teal)">selection</text>
+        <text x="806" y="272" text-anchor="middle" font-size="10" font-weight="600" fill="var(--teal)">fingerprints: already applied</text>
+      </svg>
+      <figcaption><b>Instructions are Claude-synthesized and model-agnostic; the code is Phi-3's own. Lineage verified by 100% exact match — and the selection step turned out to have already been applied.</b></figcaption>
+    </figure>
+  </div>
+  </div>
+</section>
+
+<!-- 06 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>04 · Data</span><span class="dim">one pair, and the distribution</span></div>
+  <h1>What a preference pair actually contains</h1>
+  <div class="body">
+    <div class="eq">
+{<br>
+&nbsp;&nbsp;<span class="hi">"prompt"</span>&nbsp;&nbsp;: "Write a Python function that reads a filename from user input…",<br>
+&nbsp;&nbsp;<span class="hi">"chosen"</span>&nbsp;&nbsp;: "import os\ndef read_user_file(base_dir, filename):\n&nbsp;&nbsp;&nbsp;&nbsp;full = os.path.normpath(os.path.join(base_dir, filename))\n&nbsp;&nbsp;&nbsp;&nbsp;<span class="hi">if not full.startswith(os.path.abspath(base_dir) + os.sep): raise ValueError</span>\n&nbsp;&nbsp;&nbsp;&nbsp;with open(full) as f: return f.read()",<br>
+&nbsp;&nbsp;<span class="hi2">"rejected"</span>: "def read_user_file(base_dir, filename):\n&nbsp;&nbsp;&nbsp;&nbsp;with open(<span class="hi2">base_dir + \"/\" + filename</span>) as f: return f.read()",<br>
+&nbsp;&nbsp;"lang": "py",&nbsp;&nbsp;"cwe": "cwe-022"<br>
+}
+    </div>
+    <div class="cols c2u" style="flex:0">
+      <table>
+        <thead><tr><th>Measured over 3,000 pairs</th><th class="num">p25</th><th class="num">p50</th><th class="num">p75</th><th class="num">p95</th></tr></thead>
+        <tbody>
+          <tr class="hl"><td>edit ratio ρ</td><td class="num">0.141</td><td class="num">0.358</td><td class="num">0.835</td><td class="num">0.933</td></tr>
+          <tr><td>edit hunks</td><td class="num">9</td><td class="num">17</td><td class="num">28</td><td class="num">48</td></tr>
+          <tr><td>chosen length (tokens)</td><td class="num">279</td><td class="num">443</td><td class="num">661</td><td class="num">1032</td></tr>
+          <tr><td>rejected length (tokens)</td><td class="num">387</td><td class="num">545</td><td class="num">743</td><td class="num">1019</td></tr>
+        </tbody>
+      </table>
+      <div class="box r">
+        <span class="k">Two assumptions this killed</span>
+        <ul style="margin:0">
+          <li>"pairs differ by 1–3 lines" — single contiguous diff: <b>0.1%</b>; common prefix+suffix: <b>14.3%</b></li>
+          <li>"the fixed version is longer" — <b>rejected is longer</b>, 576 vs 496 mean tokens</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- 07 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>05 · Pipeline</span><span class="dim">training</span></div>
+  <h1>Dataset to adapter, in four steps</h1>
+  <div class="body">
+<figure>
+      <svg viewBox="0 0 880 210" role="img" aria-label="Training pipeline in four steps: convert the dataset to preference triples, apply the chat template, train a frozen Phi-3 plus a trainable prefix under DPO, and save a 3 MB adapter">
+        <defs><marker id="t1ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+
+        <rect x="8" y="46" width="152" height="52" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="84" y="66" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">HF dataset</text>
+        <text x="84" y="83" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">45,785 rows</text>
+        <text x="84" y="118" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="var(--ink-3)">T1 convert_prosec_to_pref.py</text>
+
+        <path d="M164 72 L198 72" stroke="currentColor" stroke-width="1.4" marker-end="url(#t1ar)"/>
+
+        <rect x="202" y="46" width="160" height="52" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="282" y="66" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">train_pref.jsonl</text>
+        <text x="282" y="83" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">prompt / chosen / rejected</text>
+        <text x="282" y="118" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="var(--ink-3)">T2 apply_chat_template</text>
+        <text x="282" y="132" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">prompt only — never the completions</text>
+
+        <path d="M366 72 L400 72" stroke="currentColor" stroke-width="1.4" marker-end="url(#t1ar)"/>
+
+        <rect x="404" y="30" width="252" height="84" rx="5" fill="var(--teal-soft)" stroke="var(--teal)" stroke-width="1.6"/>
+        <text x="530" y="50" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">train_prefix.py</text>
+        <rect x="418" y="58" width="224" height="20" rx="3" fill="var(--surface)" stroke="var(--ink-3)" stroke-width="1" stroke-dasharray="4 3"/>
+        <text x="530" y="72" text-anchor="middle" font-size="10" fill="var(--ink-3)">Phi-3-mini ❄ frozen — 3.8 B params, no optimizer state</text>
+        <rect x="418" y="84" width="224" height="22" rx="3" fill="var(--teal)"/>
+        <text x="530" y="99" text-anchor="middle" font-size="10.5" font-weight="600" fill="var(--surface)">prefix 3.15 M  |  or LoRA 12.58 M</text>
+        <text x="530" y="132" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="var(--ink-3)">T3 DPO beta=0.05 · 800 steps @ batch 64 · seed 42</text>
+
+        <path d="M660 72 L694 72" stroke="currentColor" stroke-width="1.4" marker-end="url(#t1ar)"/>
+
+        <rect x="698" y="46" width="174" height="52" rx="4" fill="var(--surface)" stroke="var(--teal)" stroke-width="1.6"/>
+        <text x="785" y="66" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--teal)">adapter directory</text>
+        <text x="785" y="83" text-anchor="middle" font-size="10.5" fill="var(--ink-3)">≈ 3 MB · the pluggable module</text>
+        <text x="785" y="118" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="var(--ink-3)">T4 adapter_model.safetensors</text>
+        <text x="785" y="132" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">+ adapter_config.json + tokenizer</text>
+
+        <line x1="8" y1="158" x2="872" y2="158" stroke="var(--rule)" stroke-width="1"/>
+        <text x="8" y="178" font-size="11" font-weight="600" fill="currentColor">The only variable between the two arms:</text>
+        <text x="272" y="178" font-size="11" font-family="var(--font-mono)" font-weight="600" fill="var(--rust)">--peft_method {prefix, lora}</text>
+        <text x="8" y="196" font-size="10.5" fill="var(--ink-3)">Same data, same beta, same steps, same effective batch, same seed. Only the learning rate is tuned separately — under an equal search budget.</text>
+      </svg>
+      <figcaption><b>The chat template is applied to the prompt only — training and evaluation must use the identical format, or the prefix is optimized against a context that never occurs at inference.</b></figcaption>
+    </figure>
+  </div>
+  </div>
+</section>
+
+<!-- 08 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>05 · Pipeline</span><span class="dim">one optimizer step</span></div>
+  <h1>What happens inside a step</h1>
+  <div class="body">
+    <div class="cols c2">
+      <div style="display:flex; flex-direction:column; gap:.7cqw">
+        <ul class="tight" style="margin:0">
+          <li>Build two sequences: <code>prompt + chosen</code>, <code>prompt + rejected</code></li>
+          <li>Forward both — frozen model, 16 virtual tokens prepended to every layer's KV. <b>Prompt tokens masked out of the loss</b></li>
+          <li>Forward once more with the adapter disabled → the DPO reference</li>
+          <li><code>r = β·Σ log(π/π_ref)</code>, &nbsp;<code>L = −log σ(r_chosen − r_rejected)</code></li>
+          <li>Backward — <b>3.15 M</b> parameters get gradient; the 3.8 B base gets none</li>
+        </ul>
+        <div class="eq">
+<span class="cm"># the logged line every sweep reads</span><br>
+{'loss': 0.6931, <span class="hi">'rewards/chosen'</span>: −1.45,<br>
+&nbsp;<span class="hi2">'rewards/rejected'</span>: −1.65, 'rewards/margins': 0.20,<br>
+&nbsp;'rewards/accuracies': 0.53, 'grad_norm': 8.4}
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Field</th><th>Healthy</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">rewards/chosen</td><td class="good">holds or rises</td><td>falling means the secure code is being suppressed too</td></tr>
+          <tr><td class="mono">rewards/rejected</td><td class="good">falls</td><td>—</td></tr>
+          <tr><td class="mono">rewards/margins</td><td class="good">widens from both sides</td><td>one-sided widening is a warning</td></tr>
+          <tr class="dim"><td class="mono">rewards/accuracies</td><td>—</td><td><b>least useful field</b> — a collapsing run still ranks correctly and scores 0.99</td></tr>
+          <tr><td class="mono">grad_norm</td><td class="good">bounded</td><td>logged pre-clipping</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- 09 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>06 · Learning rate</span><span class="dim">1 of 2 — the diagnostic sweep</span></div>
+  <h1>The first sweep answered a different question</h1>
+  <div class="body">
+    <div class="cols c2v">
+      <table>
+        <thead><tr><th></th><th>Diagnostic</th><th>Main line</th></tr></thead>
+        <tbody>
+          <tr class="hl"><td>Purpose</td><td>underfit or capacity?</td><td>choose the lr</td></tr>
+          <tr><td>β</td><td class="num">0.1</td><td class="num">0.05</td></tr>
+          <tr><td>Effective batch</td><td class="num">16</td><td class="num">64</td></tr>
+          <tr><td>Subset</td><td class="num">4,000</td><td class="num">16,000</td></tr>
+          <tr><td>Optimizer steps</td><td class="num">250</td><td class="num">250</td></tr>
+          <tr><td>Criterion</td><td>ad-hoc thresholds</td><td>suppression ratio</td></tr>
+          <tr class="hl"><td>Outcome</td><td>1e-4</td><td>LoRA 5e-6 · Prefix 5e-5</td></tr>
+        </tbody>
+      </table>
+      <div style="display:flex; flex-direction:column; gap:.7cqw">
+        <table>
+          <thead><tr><th>lr</th><th class="num">chosen Δ</th><th class="num">rejected Δ</th><th class="num">margin</th><th class="num">acc</th><th class="num">grad max</th><th>Reading</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">2e-5</td><td class="num">+0.076</td><td class="num">+0.016</td><td class="num">0.27</td><td class="num">0.607</td><td class="num">18</td><td class="bad">underfit — what the first full run used</td></tr>
+            <tr class="hl"><td class="mono">1e-4</td><td class="num">+0.035</td><td class="num">−0.401</td><td class="num">0.72</td><td class="num">0.735</td><td class="num">21</td><td class="good">both sides contributing</td></tr>
+            <tr><td class="mono">1e-3</td><td class="num">−2.833</td><td class="num">−6.294</td><td class="num">4.29</td><td class="num">0.934</td><td class="num bad">2498</td><td class="bad">chosen collapses too</td></tr>
+            <tr><td class="mono">5e-3</td><td class="num">−21.910</td><td class="num">−34.188</td><td class="num">14.35</td><td class="num">0.975</td><td class="num">26</td><td class="bad">reward collapse</td></tr>
+          </tbody>
+        </table>
+        <div class="call">
+          <span class="k">Two takeaways</span>
+          Not everything underfits → <b>the prefix is not capacity-bound</b>. And the usable band is far narrower than the literature's 1e-3 – 1e-2, which is a <em>supervised</em> scale.
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- 10 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>06 · Learning rate</span><span class="dim">2 of 2 — the main-line sweep</span></div>
+  <h1>Both arms, one grid, one rule</h1>
+  <p class="sub">DPO · β=0.05 · effective batch 64 · 16,000-pair subset = 250 optimizer steps · five candidates per arm. <b>Selection rule, applied identically to both:</b> the highest lr whose suppression ratio ≥ 3 and whose gradient has not blown up.</p>
+  <div class="body">
+    <div class="cols c2">
+      <div style="display:flex; flex-direction:column; gap:.5cqw">
+        <h2>LoRA r=8 all-linear · 12,582,912 params</h2>
+        <table>
+          <thead><tr><th>lr</th><th class="num">per-token drift</th><th class="num">prob. retained</th><th class="num">suppr. ratio</th><th class="num">acc</th></tr></thead>
+          <tbody>
+            <tr class="hl"><td class="mono">5e-6</td><td class="num">−0.006</td><td class="num good">99.4%</td><td class="num good">4.63 ✔</td><td class="num">0.724</td></tr>
+            <tr><td class="mono">2e-5</td><td class="num">−0.150</td><td class="num">86.1%</td><td class="num bad">2.36</td><td class="num">0.975</td></tr>
+            <tr><td class="mono">5e-5</td><td class="num">−0.746</td><td class="num bad">47.4%</td><td class="num bad">1.94</td><td class="num">0.989</td></tr>
+            <tr><td class="mono">1e-4</td><td class="num">−1.562</td><td class="num bad">21.0%</td><td class="num bad">1.88</td><td class="num">0.995</td></tr>
+            <tr><td class="mono">2e-4</td><td class="num">−1.408</td><td class="num bad">24.5%</td><td class="num bad">2.37</td><td class="num">0.997</td></tr>
+          </tbody>
+        </table>
+        <p class="sub" style="margin:0; font-size:1.14cqw">Rejected the next rung up: <b>2e-5 drops the ratio to 2.36</b>. Chosen value <b>5e-6</b> is the paper's own setting.</p>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:.5cqw">
+        <h2>Prefix nvt=16 · 3,145,728 params</h2>
+        <table>
+          <thead><tr><th>lr</th><th class="num">chosen Δ</th><th class="num">rejected Δ</th><th class="num">suppr. ratio</th><th class="num">acc</th><th class="num">grad max</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">5e-6</td><td class="num good">+0.040</td><td class="num">−0.015</td><td class="num good">∞</td><td class="num bad">0.554</td><td class="num">45</td></tr>
+            <tr><td class="mono">2e-5</td><td class="num good">+0.034</td><td class="num">−0.098</td><td class="num good">∞</td><td class="num bad">0.612</td><td class="num">34</td></tr>
+            <tr class="hl"><td class="mono">5e-5</td><td class="num">−0.058</td><td class="num">−0.366</td><td class="num good">6.30 ✔</td><td class="num">0.692</td><td class="num">67</td></tr>
+            <tr><td class="mono">1e-4</td><td class="num">−0.307</td><td class="num">−0.805</td><td class="num bad">2.62</td><td class="num">0.730</td><td class="num bad">3722</td></tr>
+            <tr><td class="mono">2e-4</td><td class="num bad">−3.413</td><td class="num bad">−4.193</td><td class="num bad">1.23</td><td class="num">0.647</td><td class="num bad">3672</td></tr>
+          </tbody>
+        </table>
+        <p class="sub" style="margin:0; font-size:1.14cqw">Rejected the next rung up: <b>1e-4 drops the ratio to 2.62 and the gradient jumps 56×</b>. The two ∞ rows sit in the underfit zone — acc 0.554 / 0.612, the same range a run already confirmed as underfit.</p>
+      </div>
+    </div>
+    <div class="cols c3" style="flex:0">
+      <div class="box t">
+        <span class="k">Decisions</span>
+        <p><b>LoRA 5e-6 · Prefix 5e-5 — 10× apart</b>, chosen by one rule on one grid. At 5e-5 the prefix is at its best while LoRA has already lost more than half its probability mass on the secure code.</p>
+      </div>
+      <div class="box">
+        <span class="k">suppression ratio</span>
+        <p><code>Δ rejected ÷ Δ chosen</code>. Units cancel, so one threshold works across objectives.<br><b>∞</b> chosen never fell · <b>&gt; 2</b> healthy · <b>≈ 1</b> collapse.</p>
+      </div>
+      <div class="box o">
+        <span class="k">Why not simply take ∞</span>
+        <p>An untrained prefix also produces ∞ — chosen cannot fall if nothing moves. The <b>margin growth</b> separates them: +86% and +177% for the two ∞ rows, <b>+326%</b> at 5e-5.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- 11 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>07 · Pipeline</span><span class="dim">evaluation</span></div>
+  <h1>Benchmark prompt to a percentage</h1>
+  <div class="body">
+<figure>
+      <svg viewBox="0 0 880 250" role="img" aria-label="Evaluation pipeline: 693 benchmark prompts generate ten samples each with the prefix on and off, truncated samples are removed pairwise, fence-less responses are wrapped, a static analyzer scans each code block, and the vulnerable-code ratio is aggregated, with a degeneration gate running alongside">
+        <defs><marker id="e1ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+
+        <rect x="8" y="40" width="128" height="46" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="72" y="59" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">instruct.json</text>
+        <text x="72" y="75" text-anchor="middle" font-size="10" fill="var(--ink-3)">1,916 → <tspan font-weight="600">693</tspan> prompts</text>
+        <text x="72" y="104" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--ink-3)">E1</text>
+
+        <path d="M140 63 L166 63" stroke="currentColor" stroke-width="1.3" marker-end="url(#e1ar)"/>
+
+        <rect x="170" y="40" width="140" height="46" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="240" y="59" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">gen_for_icd.py</text>
+        <text x="240" y="75" text-anchor="middle" font-size="10" fill="var(--ink-3)">693 × 10 × ON/OFF</text>
+        <text x="240" y="104" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--ink-3)">E2 · paired seed</text>
+
+        <path d="M314 63 L340 63" stroke="currentColor" stroke-width="1.3" marker-end="url(#e1ar)"/>
+
+        <rect x="344" y="40" width="140" height="46" rx="4" fill="var(--rust-soft)" stroke="var(--rust)" stroke-width="1.4"/>
+        <text x="414" y="59" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">filter_truncated</text>
+        <text x="414" y="75" text-anchor="middle" font-size="10" fill="var(--rust)">drop pairwise</text>
+        <text x="414" y="104" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--rust)">E3 · new</text>
+
+        <path d="M488 63 L514 63" stroke="currentColor" stroke-width="1.3" marker-end="url(#e1ar)"/>
+
+        <rect x="518" y="40" width="146" height="46" rx="4" fill="var(--ochre-soft)" stroke="var(--ochre)" stroke-width="1.4"/>
+        <text x="591" y="59" text-anchor="middle" font-size="10.5" font-weight="600" fill="currentColor">normalize_responses</text>
+        <text x="591" y="75" text-anchor="middle" font-size="10" fill="var(--ochre)">wrap fence-less code</text>
+        <text x="591" y="104" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--ochre)">E4</text>
+
+        <path d="M668 63 L694 63" stroke="currentColor" stroke-width="1.3" marker-end="url(#e1ar)"/>
+
+        <rect x="698" y="40" width="174" height="46" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="785" y="59" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">detect_all.py</text>
+        <text x="785" y="75" text-anchor="middle" font-size="10" fill="var(--ink-3)">regex + semgrep / weggli</text>
+        <text x="785" y="104" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--ink-3)">E5 · 6,930 code blocks</text>
+
+        <path d="M785 110 L785 130 L440 130 L440 150" stroke="currentColor" stroke-width="1.3" fill="none" marker-end="url(#e1ar)"/>
+
+        <rect x="300" y="154" width="280" height="44" rx="4" fill="var(--surface)" stroke="var(--teal)" stroke-width="1.5"/>
+        <text x="440" y="173" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--teal)">score_detected.py</text>
+        <text x="440" y="189" text-anchor="middle" font-size="10" fill="currentColor">Vulnerable Ratio ↓ — per language, per CWE, overall</text>
+
+        <rect x="8" y="154" width="270" height="44" rx="4" fill="var(--rust-soft)" stroke="var(--rust)" stroke-width="1.4"/>
+        <text x="143" y="173" text-anchor="middle" font-size="11" font-weight="600" fill="var(--rust)">check_degeneration.py</text>
+        <text x="143" y="189" text-anchor="middle" font-size="9.5" fill="currentColor">length / parse rate / stub rate</text>
+        <path d="M240 110 L143 110 L143 150" stroke="var(--rust)" stroke-width="1.3" stroke-dasharray="4 3" fill="none" marker-end="url(#e1ar)"/>
+
+        <rect x="602" y="154" width="270" height="44" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="737" y="173" text-anchor="middle" font-size="10.5" font-weight="600" fill="currentColor">run_humaneval / run_multipl_e</text>
+        <text x="737" y="189" text-anchor="middle" font-size="9.5" fill="var(--ink-3)">greedy pass@1 — code is actually executed</text>
+
+        <line x1="8" y1="212" x2="872" y2="212" stroke="var(--rule)" stroke-width="1"/>
+        <text x="8" y="230" font-size="10.5" font-weight="600" fill="currentColor">Granularity changes at E5:</text>
+        <text x="192" y="230" font-size="10.5" fill="var(--ink-3)">input is one row per prompt (693); output is <tspan font-weight="600" fill="currentColor">one row per code block (6,930)</tspan>. A block counts as vulnerable when <tspan font-family="var(--font-mono)">detection_results</tspan> is non-empty.</text>
+        <text x="8" y="245" font-size="10.5" fill="var(--ink-3)">Any rule counts — it need not be the CWE the prompt targeted. Report the <tspan font-weight="600">per-language mean</tspan>, not the pooled OVERALL: the two differ (45.21→40.54 vs 41.47→37.81).</text>
+      </svg>
+      <figcaption><b>Granularity changes at the detector: 693 rows in, 6,930 code blocks out. Report the per-language mean, not the pooled figure — 45.21→40.54 and 41.47→37.81 are the same data.</b></figcaption>
+    </figure>
+  </div>
+  </div>
+</section>
+
+<!-- 12 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>08 · Not in the paper</span><span class="dim">1 of 3 — the fence bug</span></div>
+  <h1>A Markdown convention treated as a contract</h1>
+  <div class="body">
+    <div class="cols c2">
+      <div style="display:flex; flex-direction:column; gap:.7cqw">
+        <div class="eq">
+<span class="cm"># the detector's code extractor — the whole thing</span><br>
+def parse_code_blocks(text):<br>
+&nbsp;&nbsp;&nbsp;&nbsp;blocks, inside = [], False<br>
+&nbsp;&nbsp;&nbsp;&nbsp;for line in text.split('\n'):<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;if '```' in line: inside = not inside<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;elif inside: blocks.append(line)<br>
+&nbsp;&nbsp;&nbsp;&nbsp;return '\n'.join(blocks)&nbsp;&nbsp;<span class="hi2"># "" when there is no fence</span>
+        </div>
+        <div class="eq">
+<span class="cm"># the fix</span><br>
+if has_nonempty_fenced_block(resp): keep(resp)<br>
+else: keep(<span class="hi">"```\n" + resp + "\n```"</span>)
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Step</th><th>What happens</th></tr></thead>
+        <tbody>
+          <tr><td>Benchmark prompt ends with</td><td><em>"Only return the code, don't include any other information, such as a preamble or suffix."</em></td></tr>
+          <tr><td>Model</td><td>reasonably omits the fence — nothing anywhere configures it; it is a <b>learned habit</b></td></tr>
+          <tr><td>Extractor</td><td>returns an <b>empty string</b></td></tr>
+          <tr><td>Analyzer</td><td>scans an empty file → zero issues</td></tr>
+          <tr class="hl"><td>Recorded as</td><td class="bad"><b>safe</b> — no error anywhere in the chain</td></tr>
+          <tr class="hl"><td>Scale of the damage</td><td><b>84%</b> of code blocks empty · vulnerable ratio diluted <b>≈6×</b></td></tr>
+          <tr><td>After the fix</td><td class="good">base model matches the paper — JS <b>52.24 vs 52.24</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- 13 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>08 · Not in the paper</span><span class="dim">2 of 3 — the degeneration gate</span></div>
+  <h1>A security score can be bought by writing less</h1>
+  <p class="sub"><b>A static analyzer can only report vulnerabilities in code it can read.</b> Anything that shrinks or breaks the readable code lowers the vulnerability rate without making anything safer — so every security number ships with these three conditions.</p>
+  <div class="body">
+    <table>
+      <thead><tr><th>Condition</th><th>Threshold</th><th class="num">LoRA</th><th class="num">Prefix</th><th>What it catches</th></tr></thead>
+      <tbody>
+        <tr><td>Code length retained vs OFF</td><td class="num">≥ 90%</td><td class="num">226%</td><td class="num">103%</td><td>the model simply writing less</td></tr>
+        <tr class="hl"><td>Syntax rate Δ <span style="color:var(--ink-3)">(un-truncated responses only)</span></td><td class="num">≥ −3 pt</td><td class="num good">+0.25 ✔</td><td class="num bad">−4.74 ✘</td><td>code that no longer parses</td></tr>
+        <tr><td>Stub / TODO rate Δ</td><td class="num">≤ +2 pt</td><td class="num">—</td><td class="num">—</td><td>empty bodies, <code>pass</code>, <code>NotImplementedError</code></td></tr>
+        <tr class="dim"><td colspan="2"><b>Verdict</b></td><td class="warn">passes</td><td class="bad">fails</td><td>a failing arm may not report its security number alone</td></tr>
+      </tbody>
+    </table>
+    <div class="cols c2" style="flex:0">
+      <div class="box">
+        <span class="k">How the syntax check works</span>
+        <p>Python: real <code>ast.parse</code>. C / C++ / Java / JS: strings and comments are stripped, then brackets are matched.</p>
+        <p><b>It is a heuristic and it can be fooled</b> — a sampled LoRA output contained <code>"..." + input_filename</code>, which does not compile in C, yet its brackets balanced.</p>
+      </div>
+      <div class="box r">
+        <span class="k">⚠ And here is what the gate could not see</span>
+        <p>The prefix arm looked pristine on length and comments — and still lost <b>10.98 pt</b> of HumanEval pass@1, <b>2.6× LoRA's loss</b> (slide 15).</p>
+        <p><b>These three conditions are a screen for gross degeneration. They are not a substitute for pass@1.</b> Normal length and balanced brackets do not mean the code is correct.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- 14 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>08 · Not in the paper</span><span class="dim">3 of 3 — truncation</span></div>
+  <h1>One cause, two opposite illusions</h1>
+  <div class="body">
+<figure>
+      <svg viewBox="0 0 880 200" role="img" aria-label="Truncation mechanism: longer generations hit the max_new_tokens ceiling, the cut code fails brace matching so the syntax rate collapses, and the broken code no longer matches analyzer rules so the vulnerability rate falsely improves">
+        <defs>
+          <marker id="tcar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+          <marker id="tcarR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5.5" markerHeight="5.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--rust)"/></marker>
+        </defs>
+        <rect x="14" y="20" width="150" height="42" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="1.2"/>
+        <text x="89" y="38" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">LoRA writes longer</text>
+        <text x="89" y="53" text-anchor="middle" font-size="10" fill="var(--ink-3)">code length 226% of OFF</text>
+        <path d="M168 41 L202 41" stroke="currentColor" stroke-width="1.4" marker-end="url(#tcar)"/>
+        <rect x="206" y="20" width="168" height="42" rx="4" fill="var(--ochre-soft)" stroke="var(--ochre)" stroke-width="1.4"/>
+        <text x="290" y="38" text-anchor="middle" font-size="10.5" font-weight="600" fill="currentColor">hits max_new_tokens = 512</text>
+        <text x="290" y="53" text-anchor="middle" font-size="10" fill="var(--ochre)">ON 14.4% vs OFF 1.2%</text>
+        <path d="M378 41 L412 41" stroke="var(--rust)" stroke-width="1.4" marker-end="url(#tcarR)"/>
+        <rect x="416" y="20" width="160" height="42" rx="4" fill="var(--rust-soft)" stroke="var(--rust)" stroke-width="1.4"/>
+        <text x="496" y="38" text-anchor="middle" font-size="11" font-weight="600" fill="currentColor">code cut mid-token</text>
+        <text x="496" y="53" text-anchor="middle" font-size="10" fill="var(--rust)">braces do not match</text>
+
+        <path d="M496 66 L496 82 L300 82 L300 100" stroke="var(--rust)" stroke-width="1.3" fill="none" marker-end="url(#tcarR)"/>
+        <path d="M496 66 L496 82 L692 82 L692 100" stroke="var(--rust)" stroke-width="1.3" fill="none" marker-end="url(#tcarR)"/>
+
+        <rect x="180" y="104" width="240" height="46" rx="4" fill="var(--surface)" stroke="var(--rust)" stroke-width="1.2"/>
+        <text x="300" y="122" text-anchor="middle" font-size="11" font-weight="600" fill="var(--rust)">Illusion A — looks broken</text>
+        <text x="300" y="139" text-anchor="middle" font-size="10" fill="currentColor">syntax rate <tspan font-family="var(--font-mono)" font-weight="600">−46.00 pt</tspan></text>
+
+        <rect x="572" y="104" width="240" height="46" rx="4" fill="var(--surface)" stroke="var(--rust)" stroke-width="1.6"/>
+        <text x="692" y="122" text-anchor="middle" font-size="11" font-weight="600" fill="var(--rust)">Illusion B — looks great</text>
+        <text x="692" y="139" text-anchor="middle" font-size="10" fill="currentColor">broken code matches no rule → "safe"</text>
+
+        <text x="300" y="168" text-anchor="middle" font-size="10" fill="var(--ink-3)">raise the ceiling → <tspan font-weight="600" fill="var(--teal)">+0.25</tspan></text>
+        <text x="692" y="168" text-anchor="middle" font-size="10" fill="var(--ink-3)">drop truncated pairwise → −18.80 becomes <tspan font-weight="600">−17.80</tspan></text>
+
+        <line x1="14" y1="180" x2="866" y2="180" stroke="var(--rule)" stroke-width="1"/>
+        <text x="14" y="196" font-size="10.5" font-weight="600" fill="currentColor">How we spotted it:</text>
+        <text x="150" y="196" font-size="10.5" fill="var(--ink-3)">the damage is <tspan font-weight="600" fill="currentColor">non-linear</tspan> — length +2% → −4.6 pt, +24% → −6.6 pt, <tspan font-weight="600" fill="var(--rust)">+75% → −46.0 pt</tspan>. Real degradation is smooth; a hard ceiling looks like this.</text>
+      </svg>
+      <figcaption><b>This is why "the gate failed" and "the number looks amazing" appeared together</b> — the same cause produced both. The scope is wider than this run: <b>every past evaluation where ON wrote more than OFF may be contaminated</b>, including Exp1 and Exp2.</figcaption>
+    </figure>
+    <div class="cols c3" style="flex:0">
+      <div class="box o">
+        <span class="k">Fix 1 · raise the ceiling</span>
+        <p><code>max_new_tokens</code> 512 → 1024. LoRA's syntax rate went <b>−46.00 → +0.25</b>: it was a measurement artifact, not model damage.</p>
+      </div>
+      <div class="box t">
+        <span class="k">Fix 2 · drop truncated <em>pairwise</em></span>
+        <p>If either arm's sample is cut, both go. Filtering one side alone compares its easy subset against the other's full set.</p>
+        <p style="font-family:var(--font-mono); font-size:1.1cqw; color:var(--ink); line-height:1.6">
+          LoRA&nbsp;&nbsp;&nbsp;−18.80 → <b>−17.80</b><br>
+          Prefix&nbsp;−6.20 → <b>−5.82</b><br>
+          gap&nbsp;&nbsp;&nbsp;&nbsp;12.6 → <b>12.0 pt</b>
+        </p>
+        <p><b>So truncation was not the cause of the gap</b> — but the filtered pair is what gets reported.</p>
+      </div>
+      <div class="box r">
+        <span class="k">Independent confirmation, on a different benchmark</span>
+        <p>The same base model, the same script, only the ceiling changed:</p>
+        <p style="font-family:var(--font-mono); font-size:1.1cqw; color:var(--ink); line-height:1.6">
+          HumanEval pass@1, base<br>
+          512&nbsp;&nbsp;tokens → <b>64.63%</b><br>
+          2048 tokens → <b>70.73%</b>
+        </p>
+        <p><b>The base model alone was understated by 6.1 pt.</b> Every earlier utility number is contaminated.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- 15 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>09 · Results</span><span class="dim">training</span></div>
+  <h1>Both arms, DPO, 800 steps @ batch 64</h1>
+  <p class="sub">Same data, same β, same steps, same effective batch, same seed. The only intended difference is <code>--peft_method</code>; the learning rates were tuned separately under an equal budget.</p>
+  <div class="body">
+    <table>
+      <thead><tr><th></th><th class="num">LoRA · lr 5e-6</th><th class="num">Prefix · lr 5e-5</th><th>Reading</th></tr></thead>
+      <tbody>
+        <tr><td>Trainable parameters</td><td class="num">12,582,912</td><td class="num">3,145,728</td><td class="bad">not matched — <b>4× apart</b></td></tr>
+        <tr><td>chosen per-token probability retained</td><td class="num">88.8%</td><td class="num good">94.6%</td><td>the prefix disturbed the base model less</td></tr>
+        <tr><td>rewards/margins</td><td class="num good">4.11</td><td class="num">0.82</td><td>LoRA trained harder</td></tr>
+        <tr class="dim"><td>rewards/accuracies</td><td class="num">0.975</td><td class="num">0.753</td><td>not diagnostic on its own</td></tr>
+        <tr><td>grad_norm peak</td><td class="num">87</td><td class="num bad">18,657</td><td>5 spikes, decreasing, <b>chosen recovered after each</b> (−3.24 → −1.27)</td></tr>
+      </tbody>
+    </table>
+    <div class="cols c2" style="flex:0">
+      <div class="box r">
+        <span class="k">The inequality</span>
+        <p>Any gap between these two arms is confounded by the 4× parameter difference.</p>
+      </div>
+      <div class="box t">
+        <span class="k">It can be matched exactly</span>
+        <table style="font-size:1.12cqw; margin-top:.2cqw">
+          <tbody>
+            <tr><td class="mono warn">Prefix nvt=64</td><td class="mono good">↔ LoRA all-linear ✔</td><td class="num">12,582,912</td></tr>
+            <tr><td class="mono good">Prefix nvt=16 ✔</td><td class="mono warn">↔ LoRA qkv_proj only</td><td class="num">3,145,728</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- 16 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>09 · Results</span><span class="dim">both axes</span></div>
+  <h1>The prefix loses on security <em>and</em> on functionality</h1>
+  <div class="body">
+    <div class="cols c2">
+      <div style="display:flex; flex-direction:column; gap:.5cqw">
+        <h2>Security · vulnerable-code ratio ↓</h2>
+        <p class="sub" style="margin:0; font-size:1.12cqw">100 prompts × 5 samples, C and C++, truncated dropped pairwise. SE ≈ 2.2 pt.</p>
+        <table>
+          <thead><tr><th></th><th class="num">OFF</th><th class="num">ON</th><th class="num">Δ</th><th class="num">relative</th></tr></thead>
+          <tbody>
+            <tr class="hl"><td>LoRA · 12.58 M</td><td class="num">49.41%</td><td class="num">31.62%</td><td class="num good">−17.80</td><td class="num good">−36.0%</td></tr>
+            <tr><td>Prefix · 3.15 M</td><td class="num">49.27%</td><td class="num">43.45%</td><td class="num">−5.82</td><td class="num">−11.8%</td></tr>
+          </tbody>
+        </table>
+        <h2 style="margin-top:.3cqw">Functionality · HumanEval pass@1 ↑</h2>
+        <p class="sub" style="margin:0; font-size:1.12cqw">164 problems, greedy, <code>max_new_tokens=2048</code>, <b>0/164 truncated</b>.</p>
+        <table>
+          <thead><tr><th></th><th class="num">OFF</th><th class="num">ON</th><th class="num">Δ</th></tr></thead>
+          <tbody>
+            <tr><td>LoRA</td><td class="num">70.73%</td><td class="num">66.46%</td><td class="num">−4.27</td></tr>
+            <tr class="hl"><td>Prefix</td><td class="num">70.73%</td><td class="num">59.76%</td><td class="num bad">−10.98</td></tr>
+          </tbody>
+        </table>
+        <div class="call r">
+          <span class="k">Both hypotheses falsified</span>
+          <b>H1</b> (a prefix captures most of the security gain) — it captures a third. <b>H2</b> (a prefix costs less utility) — it costs <b>2.6×</b> more. <b>It learns less and damages more.</b>
+        </div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:.5cqw">
+        <h2>Ruled out: this is not a bug</h2>
+        <table>
+          <thead><tr><th>Suspicion</th><th>Check</th><th>Outcome</th></tr></thead>
+          <tbody>
+            <tr><td>Truncation inflating LoRA</td><td>drop truncated pairwise</td><td class="good">cleared — 12.6 → 12.0 pt</td></tr>
+            <tr><td>Truncation deflating pass@1</td><td><code>max_new_tokens</code> 2048</td><td class="good">cleared — 0/164 truncated</td></tr>
+            <tr class="hl"><td>Prefix ↔ KV-cache interaction bug</td><td>per-problem inspection of the 27 regressions</td><td class="good">cleared — real capability loss</td></tr>
+            <tr><td>Pipeline or data error</td><td>LoRA shares every line except the peft config</td><td class="good">cleared — LoRA behaves sensibly</td></tr>
+          </tbody>
+        </table>
+        <div class="box">
+          <span class="k">What the 27 regressions actually look like</span>
+          <p style="font-family:var(--font-mono); font-size:1.06cqw; line-height:1.55; color:var(--ink)">
+            HumanEval/102 &nbsp;checks endpoints only → wrong answer<br>
+            HumanEval/106 &nbsp;unbalanced comprehension → SyntaxError<br>
+            HumanEval/11 &nbsp;&nbsp;<span style="color:var(--rust)">rewrote the docstring's expected output</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--rust)">from '100' to '000' to fit its own bug</span>
+          </p>
+          <p>Well-formatted, well-commented, <b>wrong</b>. 27 regressions vs 9 improvements — net −18 problems. Degraded reasoning and instruction-following, not broken generation.</p>
+        </div>
+        <div class="box o">
+          <span class="k">Candidate mechanism — not a conclusion</span>
+          <p>16 virtual tokens enter <b>every layer's</b> KV cache and shift attention at <b>every position</b> — a global, untargeted perturbation, where LoRA's low-rank update can be surgical.</p>
+          <p>Consistent with the sweep: the prefix jumps to chosen ≈ −0.77 within 50 steps and saturates, <b>at all five learning rates</b> — it pays a fixed utility cost before it learns anything.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+<!-- 17 -->
+<section class="slide">
+  <div class="fit">
+  <div class="eyebrow"><span>10 · Next</span><span class="dim">what is left to settle</span></div>
+  <h1>One control stands between this and a conclusion</h1>
+  <div class="body">
+    <table>
+      <thead><tr><th></th><th>Run</th><th>Why it is required</th><th>Cost</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td class="mono">1</td><td><b>Prefix nvt=64</b> vs the existing LoRA</td><td>identical parameter count — 12,582,912. The prefix currently trains on <b>a quarter</b> of LoRA's budget, so "the prefix is weaker" and "the prefix had less capacity" are not yet separable</td><td>1 run · 3–4 h</td></tr>
+        <tr class="hl"><td class="mono">2</td><td><b>LoRA qkv_proj only</b> vs the existing prefix</td><td>identical parameter count — 3,145,728. The same question from the other side</td><td>1 run · 3–4 h</td></tr>
+        <tr><td class="mono">3</td><td>MultiPL-E for both arms</td><td>HumanEval is Python only; the security screen was C/C++ only. <b>Remember <code>--max_new_tokens 2048</code></b></td><td>no training</td></tr>
+        <tr><td class="mono">4</td><td>Full security evaluation — 693 × 10 × 5 languages</td><td>the cheap screen covers 2 languages at SE 2.2 pt</td><td>no training</td></tr>
+      </tbody>
+    </table>
+    <div class="cols c2" style="flex:0">
+      <div class="box r">
+        <span class="k">If parameter matching does not close the gap</span>
+        <p>Then H1 and H2 are genuinely dead and the paper's subject changes to <b>the capability limits of prefix tuning for security alignment</b> — a negative result, but a publishable and honest one, and the candidate mechanism on the previous slide becomes the thing to test.</p>
+      </div>
+      <div class="box t">
+        <span class="k">What already stands regardless of the outcome</span>
+        <p>A reconstructed evaluation subset the paper never released · a fence-extraction bug that diluted every vulnerability rate ~6× · a truncation artifact that understated the base model by 6.1 pt · a scale-free sweep metric · and a same-pipeline LoRA reproduction landing within the paper's own range.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+</section>
+
+
+
+</div>
+
+
+<div id="bar">
+  <button id="prev" aria-label="Previous slide">◀ Prev</button>
+  <span id="counter">1 / 17</span>
+  <button id="next" aria-label="Next slide">Next ▶</button>
+  <div class="track"><div class="fill" id="fill"></div></div>
+  <span id="hint">← → or Space to navigate · Home / End to jump</span>
+</div>
+
+<script>
+(function(){
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  var counter = document.getElementById('counter');
+  var fill = document.getElementById('fill');
+  var i = 0;
+
+  function clamp(n){ return Math.max(0, Math.min(slides.length - 1, n)); }
+
+  function fit(el){
+    var f = el.querySelector('.fit');
+    if (!f) return;
+    f.style.transform = ''; f.style.width = ''; f.style.height = '';
+    if (f.scrollHeight <= f.clientHeight + 1) return;   // fits already — leave it alone
+    var k = 1;
+    for (var t = 0; t < 8; t++) {
+      k *= 0.97;
+      f.style.transform = 'scale(' + k + ')';
+      f.style.width  = (100 / k) + '%';
+      f.style.height = (100 / k) + '%';
+      if (f.scrollHeight <= f.clientHeight + 1) break;
+    }
+  }
+
+  function show(n, push){
+    i = clamp(n);
+    slides.forEach(function(s, k){ s.classList.toggle('on', k === i); });
+    fit(slides[i]);
+    counter.textContent = (i + 1) + ' / ' + slides.length;
+    fill.style.width = ((i + 1) / slides.length * 100) + '%';
+    if (push !== false) {
+      try { history.replaceState(null, '', '#' + (i + 1)); } catch (e) {}
+    }
+  }
+
+  function fromHash(){
+    var n = parseInt((location.hash || '').replace('#',''), 10);
+    return isNaN(n) ? 0 : n - 1;
+  }
+
+  document.getElementById('prev').addEventListener('click', function(){ show(i - 1); });
+  document.getElementById('next').addEventListener('click', function(){ show(i + 1); });
+
+  document.addEventListener('keydown', function(e){
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    switch (e.key) {
+      case 'ArrowRight': case 'ArrowDown': case 'PageDown': case ' ':
+        e.preventDefault(); show(i + 1); break;
+      case 'ArrowLeft': case 'ArrowUp': case 'PageUp':
+        e.preventDefault(); show(i - 1); break;
+      case 'Home': e.preventDefault(); show(0); break;
+      case 'End':  e.preventDefault(); show(slides.length - 1); break;
+    }
+  });
+
+  var rt;
+  window.addEventListener('resize', function(){
+    clearTimeout(rt);
+    rt = setTimeout(function(){ fit(slides[i]); }, 120);
+  });
+
+  window.addEventListener('beforeprint', function(){
+    slides.forEach(function(s){ s.style.display = 'flex'; });
+    slides.forEach(fit);
+  });
+
+  window.addEventListener('hashchange', function(){ show(fromHash()); });
+  show(fromHash());
+})();
+</script>

@@ -608,7 +608,13 @@ of this line expected influence selection to recover the cost; retracted — see
 | `eval/gen_for_icd.py` | Generate code for PurpleLlama benchmark (ON/OFF); `--safecoder_only` reproduces the paper subset, `--langs` for multi-language |
 | `eval/normalize_responses.py` | Wrap fence-less responses so code extraction works (run before `detect_all.py`) |
 | `eval/score_detected.py` | Aggregate vulnerable-code ratio per language + per CWE (ON vs OFF) |
-| `eval/run_humaneval.py` | HumanEval pass@1 (ON vs OFF) |
+| `eval/run_humaneval.py` | HumanEval pass@1 (ON vs OFF); `--dump` saves per-problem generations |
+| `eval/run_multipl_e.py` | MultiPL-E pass@1 for js / cpp / java |
+| `eval/filter_truncated.py` | Drop responses that hit `max_new_tokens` from ON and OFF together |
+| `eval/plot_training.py` | Plot the training curves of several runs on one figure |
+| `scripts/verify_arms.py` | Check each arm's config, parameter count and training hyperparameters |
+| `scripts/run_dpo_arms.sh` · `run_param_matched.sh` · `run_sven_scale.sh` | The training arms |
+| `scripts/run_full_eval.sh` | Paper-aligned security eval, 693 × 10 × 5 languages, resumable |
 
 > The `eval/` scripts load adapters with `PeftModel.from_pretrained` + `disable_adapter()`, so they
 > work unchanged for both LoRA and prefix. See [docs/REPRO_PAPER.md](docs/REPRO_PAPER.md) for what
