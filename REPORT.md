@@ -376,13 +376,33 @@ Per-problem: `lora_qkv` regressed 10 and gained 12 — genuine two-way improveme
 prefix nvt=16 regressed 27 / gained 9; nvt=64 regressed 59 / gained 5.
 (nvt=64 truncated 6/164, so its −32.93 is understated by at most 3.7 pt.)
 
-**Security — vulnerable-code ratio, 100 prompts × 5 samples, c/cpp only. Screening scale,
-not the paper-aligned 693 × 10 × 5 languages.** Only two arms measured so far:
+**Security — paper-aligned: 693 prompts × 10 samples × 5 languages, `max_new_tokens 2048`,
+scored as the paper does (per-language ratios averaged over the five languages). One shared OFF
+across all arms. n = 6,930 responses per arm, standard error ≈ 0.60 pt, so every effect below is
+significant (4.3–23.9 SE).**
 
-| | Δ (↓ better) | after removing truncated samples pairwise |
-|---|---|---|
-| LoRA all-linear | −18.80 | **−17.80** |
-| prefix nvt=16 | −6.20 | **−5.82** |
+| Arm | c | cpp | java | js | py | **Avg** | **Δ** | relative | Gate |
+|---|---|---|---|---|---|---|---|---|---|
+| OFF (base) | 69.41 | 26.62 | 61.50 | 51.53 | 30.64 | **47.94** | — | — | — |
+| **LoRA all-linear** | 50.59 | **8.38** | 50.59 | 36.35 | 22.57 | **33.70** | **−14.24** | −29.7% | ⚠️ py fails |
+| LoRA `qkv_proj` | 66.08 | 22.97 | 60.21 | 47.53 | 30.03 | 45.36 | −2.58 | −5.4% | ✅ all pass |
+| prefix nvt=16 | 59.22 | 22.70 | 54.81 | 43.76 | 28.99 | 41.90 | −6.04 | −12.6% | ❌ fails |
+| prefix nvt=8 | 66.67 | 24.19 | 55.56 | 48.47 | 29.83 | 44.94 | −3.00 | −6.2% | ✅ all pass |
+
+**This reproduces the paper's headline security number.** ProSec reports Phi3m-Inst going
+50.57 → 33.47; our LoRA all-linear goes 47.94 → **33.70**, an aligned value within **0.22 pt**,
+using DPO where the paper used SimPO:
+
+| | c | cpp | java | js | py | Avg |
+|---|---|---|---|---|---|---|
+| Paper base | 72.17 | 30.26 | 63.56 | 52.24 | 34.63 | 50.57 |
+| Our OFF | 69.41 | 26.62 | 61.50 | 51.53 | 30.64 | 47.94 |
+| Paper w/ ProSec | 44.27 | 20.74 | 49.09 | 28.21 | 25.05 | **33.47** |
+| Our LoRA all-linear | 50.59 | 8.38 | 50.59 | 36.35 | 22.57 | **33.70** |
+
+The averages agree closely but the per-language values do not: we are worse on C (50.59 vs
+44.27) and JS (36.35 vs 28.21) and much better on C++ (8.38 vs 20.74). The matching average is
+therefore partly coincidental, and the per-language spread should be reported alongside it.
 
 **Training dynamics** (early = first 20% of logged steps, late = last 20%):
 
@@ -486,21 +506,25 @@ attention rather than adding learning capacity.
   Scripts exist (`data/collect_training_dynamics.py`, `data/select_dnorm.py`)
 - ⏳ Phase 2: CodeLlama-7B + self-generated data
 
-**Main result table (current)** — DPO, HumanEval at `max_new_tokens 2048`, base OFF 70.73%
+**Main result table (current)** — DPO. Security: 693 × 10 × 5 languages, per-language average
+(paper-aligned). Utility: Python HumanEval, `max_new_tokens 2048`, base 70.73%.
 
-| Arm | Trainable | Utility Δ | Security Δ (c/cpp screen) |
-|---|---|---|---|
-| **LoRA `qkv_proj`** | 3.1M | **+1.22** ✅ | not yet measured |
-| LoRA all-linear | 12.6M | −4.27 | **−17.80** |
-| prefix nvt=16 | 3.1M | −10.98 | −5.82 |
-| prefix nvt=64 | 12.6M | −32.93 | not yet measured |
+| Arm | Trainable | Security Δ ↓ | Utility Δ ↑ | Degeneration gate | Pareto |
+|---|---|---|---|---|---|
+| **LoRA all-linear** | 12.6M | **−14.24** | −4.27 | ⚠️ python fails (−5.07) | ✅ front |
+| **LoRA `qkv_proj`** | 3.15M | −2.58 | **+1.22** | ✅ all pass | ✅ front |
+| prefix nvt=16 | 3.15M | −6.04 | −10.98 | ❌ fails (−3.76) | ❌ dominated |
+| prefix nvt=8 | 1.57M | −3.00 | −4.27 | ✅ all pass | ❌ dominated |
+| *paper (SimPO)* | *12.6M?* | *−17.10* | *+1.76* | *—* | *—* |
 
-**Takeaway**: at matched parameter budgets LoRA beats prefix on both security and utility, and
-LoRA on `qkv_proj` alone reproduces the paper's utility gain (+1.22 vs +1.42). H1 and H2 are both
-falsified at nvt=16 and 64 — but those sizes exceed SVEN's design range (5–12), and at SVEN's
-scale (nvt=8) prefix recovers to −4.27, matching LoRA all-linear on half the parameters. The
-prefix-vs-LoRA gap is real but far smaller than the first measurement suggested, and the two
-remaining security corners (`lora_qkv`, `prefix_nvt8`) decide the final picture.
+**Takeaway**: on the paper's own evaluation, LoRA all-linear lands at 33.70 against ProSec's
+33.47 — the security result reproduces, with DPO rather than SimPO. No prefix arm reaches the
+Pareto front: nvt=8 costs exactly the utility that all-linear costs (−4.27) for a fifth of the
+security, and nvt=16 loses on both axes while failing the degeneration gate. Prefix's one
+advantage is security per parameter (nvt=8: 1.91 pt/M against all-linear's 1.13), which matters
+only where the budget is a hard constraint. Two caveats belong with the LoRA number: it writes
+226% as much code with the comment rate nearly tripled, and its Python syntax rate fails the
+gate (−5.07).
 
 ---|---|---|---|
 | Security: Vulnerable Ratio ↓ (avg 5 langs) | 45.21% | **40.54%** | **−4.67** ✅ |
