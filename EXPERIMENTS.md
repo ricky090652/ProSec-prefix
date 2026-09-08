@@ -1036,10 +1036,68 @@ S3 應把 max_length 提到 1536（p95 約 1032）並記錄影響。
 >   masking 抓到的是雜訊，S5 應直接放棄，論文停在 L1 + L3
 > - 若 S5 放棄，方法創新改由 §10.1（CWE-specific 多 Prefix）承擔
 
+> **⚠️ 2026-09-08 再修訂：量了 SVEN 的資料集，H3 的前提基本崩了。**
+>
+> SVEN 訓練集（720 筆、9 個 CWE）的編輯規模，直接從它 precompute 的
+> `line_changes` / `char_changes` 統計（`sven/data_train_val/train/*.jsonl`）：
+>
+> | | p25 | **p50** | p75 |
+> |---|---|---|---|
+> | 函式行數 | 13 | 32 | 84 |
+> | 被改動行數 | 1 | **1** | 3 |
+> | 字元層級改動字元數 | 0 | **7** | 26 |
+> | 改動佔函式比例（行） | 1.0% | **5.6%** | 16.7% |
+> | 改動佔函式比例（字元） | 0.0% | **0.8%** | 3.8% |
+>
+> 51.1% 的配對只改 1 行、73.1% 改 ≤ 2 行、56.9% 的字元改動 ≤ 10 字元。
+>
+> 與 ProSec 並排（單位不同——SVEN 是字元/行、ProSec 是 token，但量級差距
+> 遠超過單位誤差）：
+>
+> | | SVEN | ProSec |
+> |---|---|---|
+> | 改動佔比（中位數） | 0.8%（字元）／5.6%（行） | **35.8%**（token） |
+> | hunk 數 | 中位數 **1** | 平均 **17** |
+> | 單一連續 diff | 51% | **0.1%** |
+>
+> **差一到兩個數量級。結論：ProSec 的配對不是「修補」，是「重寫」。**
+> SVEN 的 chosen 是 rejected 動了七個字元的版本；ProSec 的 chosen 是另一支
+> 獨立寫出、剛好安全的程式。
+>
+> 對 S5 的影響：
+> - **masking 本身降級。** SVEN mask 後只剩 0.8% 的 token 在算分，那是銳利的
+>   訊號；我們 mask 後還剩 64%，那不是聚焦。且一個 CWE-022 修補不可能要動
+>   17 個地方，多數 hunk 必然無關。`S5-overlap` 照跑（順便驗證這個推論），
+>   但預期結論是放棄。
+> - **complement-mask KL 升格為獨立的一招**，見下。它不依賴極小編輯：只需要
+>   「補集裡確實沒有修補」，對 `covered` 敏感、對 `precision` 不敏感。
+>   SVEN 用它錨住 99% 的程式（`sven/trainer.py:367`，權重 `1 - chosen_w`），
+>   我們能錨住 64%——但現在錨住的是 0%，這正對應觀測到的 utility 崩壞。
+> - **`S5-bucket` 升為主線**：低 ρ 子集（ρ ≤ 0.141，佔 25%）是最像修補的一批，
+>   直接測「prefix 需不需要局部編輯」。⚠️ 資料量同時變 1/4，要補一組
+>   「同樣資料量但隨機抽樣」的對照才乾淨。
+>
+> **SVEN 的 diff 是怎麼來的**（`sven/utils.py:144-199`）：
+> - line-level **不是算的**，來自 git commit 的 diff（真實 CVE 修補的行號）
+> - char-level 用 `diff_match_patch` 的 `diff_main` + `diff_cleanupSemantic`，
+>   跑兩個方向；`dataset.py:69-77` 再用 `be.char_to_token()` 轉成 token index
+> - `--diff_level` 預設 `mix`：chosen 用 char、rejected 用 line（**不對稱**——
+>   獎勵要精準、抑制要寬）；`train.py:88` 顯示 prefix 配 line 時 lr 要從
+>   1e-2 降到 1e-3，mask 越大有效梯度越大
+>
+> **我們搬不動 line-level 那一半**：ProSec 是模型生成的，沒有 commit。
+> char-level 那條路可以直接抄（只要前後兩段字串），且比 `difflib` 好——
+> `diff_cleanupSemantic` 會合併碎裂的 diff，我們量到的 17 個 hunk 有一部分
+> 可能是 `difflib` 沒有語意清理造成的假象。
+
 #### 前置分析（必須先做，幾小時，可省下一週實作）
 - [x] **S5-loc** edit-locality 統計完成（見 S1-loc 結果）
 - [ ] **S5-overlap** **diff 與 analyzer finding 行號的重疊率** —— **現在是 S5 的成敗關鍵**
 - [ ] **S5-bucket** 依 ρ 分桶：低 <0.141（25%）／中 0.141~0.835／高 >0.835（25%）
+      —— 2026-09-08 起**升為主線**，直接測「prefix 需不需要局部編輯」
+- [x] **S5-sven-scale** 量 SVEN 資料集的編輯規模（見上方 2026-09-08 修訂）
+- [ ] **S5-kl** complement-mask KL（`1 - mask` 上對 reference 做 KL），
+      獨立於 masking，不依賴極小編輯，直接對準 utility 崩壞
 
 #### 實作
 - [ ] **S5-code** token-level diff → mask 建構；處理全 0 mask 與過短 mask 的邊界
