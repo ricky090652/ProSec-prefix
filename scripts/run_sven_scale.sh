@@ -25,6 +25,7 @@
 # ARMS=prefix8nodrop 做歸因，才知道是長度還是 dropout 的功勞。
 #
 # 用法：
+#   ARMS=prefix16drop bash scripts/run_sven_scale.sh     # ★最高優先：修正對稱性的 nvt=16
 #   bash scripts/run_sven_scale.sh                       # 只跑 prefix nvt=8（約 2.5 小時）
 #   ARMS=prefix8nodrop bash scripts/run_sven_scale.sh    # 歸因 ablation（結果好再跑）
 #   ARMS=lorar4 bash scripts/run_sven_scale.sh           # 參數配對用（多半不需要）
@@ -86,16 +87,35 @@ for arm in $ARMS; do
         --lr "$LORA_LR" --output_dir "$OUT/lora_r4" \
         2>&1 | tee "$OUT/lora_r4.log"
       ;;
+    prefix16drop)
+      # 2026-09-13 新增，最高優先。eval/check_prefix_symmetry.py 實測發現
+      # 既有的 nvt=16 / 64 兩臂**沒開 dropout**，零初始化又讓所有位置起點相同，
+      # 於是它們的有效列數只有 1.01 / 1.03——16 個和 64 個位置全是同一個向量的
+      # 複本，卻付 16 倍 / 64 倍的 attention 吸收代價。那兩臂因此不是「較長的
+      # prefix」，是「被廢掉的 prefix」。
+      #
+      # 這一臂（nvt=16 + dropout 0.1）一次補上兩個乾淨對照：
+      #   vs prefix_nvt8      兩者都有 dropout → **只差長度**
+      #   vs prefix (nvt=16)  兩者都是 16     → **只差 dropout**
+      echo "=== P-sym: prefix nvt=16 + dropout $PREFIX_DROPOUT（修正對稱性）==="
+      python train_prefix.py "${common[@]}" \
+        --peft_method prefix --num_virtual_tokens 16 --prefix_init_scale 0 \
+        --prefix_dropout "$PREFIX_DROPOUT" \
+        --lr "$PREFIX_LR" --output_dir "$OUT/prefix_nvt16_drop" \
+        2>&1 | tee "$OUT/prefix_nvt16_drop.log"
+      ;;
     prefix8nodrop)
-      # 歸因用：nvt=8 但**不加** dropout。nvt=16 沒有 dropout、nvt=8 有，
-      # 一次動了兩個變數；若 nvt=8 明顯改善，跑這組才分得出是長度還是 dropout 的功勞。
-      echo "=== 歸因 ablation: prefix nvt=8，無 dropout ==="
+      # ⚠️ 這一臂現在只有「重現壞掉的設定」的價值：零初始化 + 無 dropout 會讓
+      # 8 個位置永遠相同（有效長度 1），所以它不是 dropout 的 ablation，
+      # 而是「把 prefix 廢掉」。train_prefix.py 會擋，要帶 --allow_symmetric_prefix。
+      echo "=== 重現用（非 ablation）: prefix nvt=8，無 dropout，有效長度 = 1 ==="
       python train_prefix.py "${common[@]}" \
         --peft_method prefix --num_virtual_tokens 8 --prefix_init_scale 0 \
+        --allow_symmetric_prefix \
         --lr "$PREFIX_LR" --output_dir "$OUT/prefix_nvt8_nodrop" \
         2>&1 | tee "$OUT/prefix_nvt8_nodrop.log"
       ;;
-    *) echo "未知的 arm：$arm（可用：prefix8 prefix8nodrop lorar4）"; exit 1 ;;
+    *) echo "未知的 arm：$arm（可用：prefix16drop prefix8 prefix8nodrop lorar4）"; exit 1 ;;
   esac
 done
 

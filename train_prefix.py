@@ -224,6 +224,9 @@ def main():
     # === 穩定性相關 ===
     ap.add_argument("--warmup_ratio", type=float, default=0.1,
                     help="前期 lr 暖機比例")
+    ap.add_argument("--allow_symmetric_prefix", action="store_true",
+                    help="允許「零初始化 + 無 dropout」這個會讓 nvt 個 prefix 位置"
+                         "永遠相同的設定（有效長度 = 1）。只有在刻意重現舊結果時才用")
     ap.add_argument("--max_grad_norm", type=float, default=0.3,
                     help="梯度裁剪上限。注意：log 印的 grad_norm 是裁剪『前』的值，"
                          "實測常在 8~21，代表每一步都被夾到此上限")
@@ -321,6 +324,25 @@ def main():
             **peft_kwargs,
         )
         print(f"PEFT=PrefixTuning nvt={args.num_virtual_tokens}")
+        # 零初始化把 K 和 V 全設 0，於是 nvt 個位置在 step 0 完全相同。由對稱性
+        # 它們收到相同的梯度，Adam 的 m/v 初始也是 0，所以更新量也相同——沒有
+        # 任何隨機來源的話，它們永遠保持相同。2026-09-13 實測（見
+        # eval/check_prefix_symmetry.py）：無 dropout 的 nvt=16 有效列數 1.01、
+        # nvt=64 是 1.03，而帶 dropout 的 nvt=8 是 4.84。也就是說不開 dropout 時，
+        # 加長 prefix 只增加 attention 吸收的代價，學到的內容完全沒變多。
+        # SVEN 預設就有 dropout（sven/model.py:20），所以它沒踩到。
+        if zero_init and args.num_virtual_tokens > 1 and args.prefix_dropout <= 0:
+            raise SystemExit(
+                f"❌ 零初始化 + nvt={args.num_virtual_tokens} + 無 dropout：\n"
+                "   nvt 個 prefix 位置會永遠保持相同（有效長度 = 1），\n"
+                "   卻付 nvt 倍的 attention 吸收代價。實測 nvt=16/64 的有效列數只有 1.0。\n"
+                "   請加 --prefix_dropout 0.1（SVEN 的預設，會打破對稱），\n"
+                "   或用 --prefix_init_scale 非 0 改成隨機初始化。\n"
+                "   確實要重現這個壞掉的設定時，用 --allow_symmetric_prefix。")
+        if zero_init and args.num_virtual_tokens > 1 and args.prefix_dropout <= 0 \
+                and args.allow_symmetric_prefix:
+            print("⚠️  已用 --allow_symmetric_prefix 略過對稱性檢查——"
+                  "這一臂的有效 prefix 長度會是 1")
 
     train_ds = build_dataset(args.train_file, tokenizer, not args.no_chat_template,
                              system_prompt=args.system_prompt, subset=args.subset)
