@@ -38,6 +38,10 @@ def main():
     ap.add_argument("--nvt", type=int, nargs="+", default=[8, 16, 64])
     ap.add_argument("--n_prompts", type=int, default=20,
                     help="取幾題 HumanEval 的 prompt 當輸入（真實的評測輸入）")
+    ap.add_argument("--lora_targets", default="qkv_proj,o_proj,gate_up_proj,down_proj",
+                    help="LoRA 對照掛哪些模組（Phi-3 的 all-linear）")
+    ap.add_argument("--no_lora_control", action="store_true",
+                    help="跳過 LoRA 零初始化的對照量測")
     ap.add_argument("--json_out", default=None)
     args = ap.parse_args()
 
@@ -115,16 +119,45 @@ def main():
         del m
         torch.cuda.empty_cache()
 
+    # LoRA 零初始化的對照。硬寫 0 是不誠實的——實際量一次。它應該精確等於 base
+    # （B=0 → ΔW=0），所以這一列同時也是整支腳本的 sanity check：量出來不是 ~0
+    # 就代表量測管線本身有問題，prefix 的數字也不能信。
+    lora_row = None
+    if not args.no_lora_control:
+        print("\n=== LoRA 對照（零初始化，應精確等於 base）===")
+        from peft import LoraConfig
+        m = get_peft_model(load(), LoraConfig(
+            task_type=TaskType.CAUSAL_LM, r=8, lora_alpha=16,
+            target_modules=[t.strip() for t in args.lora_targets.split(",") if t.strip()]))
+        dev = next(m.parameters()).device
+        kls, hdev = [], []
+        with torch.no_grad():
+            for e, (blp, bh) in zip(enc, base_ref):
+                o = m(input_ids=e.input_ids.to(dev),
+                      attention_mask=e.attention_mask.to(dev), output_hidden_states=True)
+                plp = o.logits[0, -1].float().log_softmax(-1).cpu()
+                kls.append(torch.nn.functional.kl_div(plp, blp, log_target=True,
+                                                      reduction="sum").item())
+                h = o.hidden_states[-1][0, -1].float().cpu()
+                hdev.append(((h - bh).norm() / bh.norm()).item())
+        lora_row = {"kl": sum(kls) / len(kls), "hidden_rel": sum(hdev) / len(hdev)}
+        print(f"  KL={lora_row['kl']:.2e}   hidden 相對變化={lora_row['hidden_rel']:.2e}")
+        del m
+        torch.cuda.empty_cache()
+
     print("\n" + "=" * 68)
     print(f"{'nvt':>5}{'吸走 attention':>16}{'KL':>10}{'hidden 變化':>14}")
     for r in rows:
         print(f"{r['nvt']:>5}{r['absorbed']:>15.1%}{r['kl']:>10.3f}{r['hidden_rel']:>13.1%}")
-    print(f"{'LoRA B=0':>5}{'0.0%':>15}{'0.000':>10}{'0.0%':>13}   ← 精確 no-op，對照")
+    if lora_row:
+        print(f"{'LoRA':>5}{'—':>16}{lora_row['kl']:>10.1e}{lora_row['hidden_rel']:>13.1e}"
+              "   ← 實測的 no-op 對照（無 prefix 位置，故無吸收量）")
     print("\n註：實際評測時 context 是完整的指令（上百個 token），"
           "所以要看長 context 那一欄，不是 1 token 的極端值。")
 
     if args.json_out:
-        json.dump(rows, open(args.json_out, "w"), indent=2)
+        json.dump({"prefix": rows, "lora_control": lora_row},
+                  open(args.json_out, "w"), indent=2)
         print(f"\n→ {args.json_out}")
 
 
