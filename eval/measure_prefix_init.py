@@ -30,6 +30,13 @@ import argparse
 import json
 
 import torch
+# peft 0.19.1 會直接讀 torch.distributed.tensor.DTensor，但有些 torch build 不會
+# 自動載入這個 submodule，於是 LoRA 掛到 nn.Linear 上時噴 AttributeError
+# （PrefixTuning 走不到這條路徑，所以只有帶 LoRA 的那幾臂會踩到）。
+try:
+    import torch.distributed.tensor  # noqa: F401
+except Exception:
+    pass
 
 
 def main():
