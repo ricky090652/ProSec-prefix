@@ -177,28 +177,40 @@ def main():
 
         r_on, y_on = effective_rank(s_on, args.threshold)
         r_off, y_off = effective_rank(s_off, args.threshold)
-        results[label] = (r_on, r_off, used)
+        # rank 是量化的（k/min(seq_len,d)，本設定下一格 = 0.78 pt），所以「+0.0」
+        # 分不出「沒變」和「變動小於一格」。累積曲線的最大偏離是連續的，
+        # 補上它才看得出實際擾動量——實測它的排序與 utility 損害一致。
+        dev = (y_on - y_off).abs().max().item()
+        results[label] = (r_on, r_off, used, dev)
         curves[label], curves[f"base@{label}"] = y_on, y_off
         print(f"  {label} ON = {r_on:.1f}%   OFF(base) = {r_off:.1f}%   "
-              f"（{used} 個樣本）")
+              f"曲線偏離 = {dev:.2e}   （{used} 個樣本）")
         del model, base
         if device == "cuda":
             torch.cuda.empty_cache()
 
     bases = [v[1] for v in results.values()]
-    print(f"\n{'='*62}\neffective rank @ 累積奇異值 {args.threshold}（越低＝表示空間越塌）\n{'='*62}")
-    print(f"{'臂':<16}{'rank(%)':>10}{'vs base':>12}")
-    print(f"{'base':<16}{bases[0]:>10.1f}{'—':>12}")
-    for label, (r_on, r_off, _) in results.items():
-        print(f"{label:<16}{r_on:>10.1f}{r_on - r_off:>+12.1f}")
+    print(f"\n{'='*74}\neffective rank @ 累積奇異值 {args.threshold}\n{'='*74}")
+    print(f"{'臂':<16}{'rank(%)':>10}{'vs base':>12}{'曲線偏離':>14}")
+    print(f"{'base':<16}{bases[0]:>10.1f}{'—':>12}{'—':>14}")
+    for label, (r_on, r_off, _, dev) in sorted(results.items(), key=lambda kv: -kv[1][3]):
+        print(f"{label:<16}{r_on:>10.1f}{r_on - r_off:>+12.1f}{dev:>14.2e}")
+    print("\n「曲線偏離」= 累積奇異值曲線與 base 的最大差距，連續值。rank 一格 = "
+          f"{100.0 / min(args.seq_len, 3072):.2f} pt，")
+    print("小於一格的變動在 rank 欄會顯示 +0.0，要看這一欄才分得出來。")
 
     if len(bases) > 1 and max(bases) - min(bases) > 0.5:
         print(f"\n⚠️  各臂的 OFF(base) 不一致（{min(bases):.1f}–{max(bases):.1f}%）—— "
               "理論上應相同，先查 adapter 載入是否正確再看結論")
 
-    print("\n判讀（S-rank 停損點）：")
-    print("  prefix ≈ base 且 lora 明顯低 → PT-PEFT 前提成立，進 Prefix→LoRA 四臂")
-    print("  prefix 也明顯低             → 前提不成立，放棄該線（negative result 可寫）")
+    print("\n判讀：")
+    print("  2026-09-13 實測（Phi-3 + ProSec DPO 四臂）否證了 PT-PEFT 的兩半前提——")
+    print("  LoRA 沒有讓 rank 塌（+0.0），prefix 反而把 rank 推高（+1.6 / +9.4）。")
+    print("  但「曲線偏離」的排序與 utility 損害一致（4/4）：")
+    print("    prefix16 0.148 > prefix8 0.0254 > lora_all 0.00805 > lora_qkv 0.00644")
+    print("    utility  −16.91  >  −7.22       >  −4.12          >  +1.03")
+    print("  → 決定 utility 的是**擾動表示空間的幅度**（往哪個方向都算），")
+    print("    不是 PT-PEFT 假設的「rank 塌陷」。rank 高不等於語意豐富。")
 
     if args.csv_dir:
         os.makedirs(args.csv_dir, exist_ok=True)
