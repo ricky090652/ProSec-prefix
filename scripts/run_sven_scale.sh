@@ -25,7 +25,8 @@
 # ARMS=prefix8nodrop 做歸因，才知道是長度還是 dropout 的功勞。
 #
 # 用法：
-#   ARMS=prefix16drop bash scripts/run_sven_scale.sh     # ★最高優先：修正對稱性的 nvt=16
+#   ARMS=prefix8mlp bash scripts/run_sven_scale.sh       # ★對齊 Li&Liang/PT-PEFT/PTC 的 MLP 版
+#   ARMS=prefix16drop bash scripts/run_sven_scale.sh     # 修正對稱性的 nvt=16
 #   bash scripts/run_sven_scale.sh                       # 只跑 prefix nvt=8（約 2.5 小時）
 #   ARMS=prefix8nodrop bash scripts/run_sven_scale.sh    # 歸因 ablation（結果好再跑）
 #   ARMS=lorar4 bash scripts/run_sven_scale.sh           # 參數配對用（多半不需要）
@@ -57,6 +58,9 @@ PREFIX_LR="${PREFIX_LR:-5e-5}"
 LORA_LR="${LORA_LR:-5e-6}"
 # SVEN 的 --dropout 預設值
 PREFIX_DROPOUT="${PREFIX_DROPOUT:-0.1}"
+# prefix MLP 的中間層寬度。16 → 訓練時 3.42M，貼近 LoRA qkv 的 3.15M。
+# 不要用 PEFT 預設（token_dim=3072 → 613M 可訓練參數）。
+ENC_HIDDEN="${ENC_HIDDEN:-16}"
 
 mkdir -p "$OUT"
 common=(
@@ -87,6 +91,26 @@ for arm in $ARMS; do
         --lr "$LORA_LR" --output_dir "$OUT/lora_r4" \
         2>&1 | tee "$OUT/lora_r4.log"
       ;;
+    prefix8mlp)
+      # 2026-09-13：對齊主流做法的 prefix。四篇裡三篇（Li & Liang 2021、PT-PEFT、
+      # PTC）都用 MLP 重參數化，只有 SVEN 不用——而我們一路跟的是 SVEN。
+      # Li & Liang 的理由是「直接最佳化 prefix 會不穩定」，而我們確實量到 prefix
+      # 兩臂的 grad_norm 尖峰到 1e5，LoRA 卻平穩在 ~40。
+      #
+      # PEFT 開了 projection 後：Embedding 隨機初始化（每列不同）→ MLP → 最後一層
+      # 歸零。所以輸出在 step 0 仍是 0（attention 吸收不變），但對稱性從第一步就破。
+      #
+      # enc_hidden=16 讓訓練時可訓練參數 3.42M，貼近 LoRA qkv 的 3.15M，參數比較
+      # 才公平。PEFT 預設會用 token_dim=3072 → 613M，絕對不能用。
+      # MLP 訓練後丟棄，推論時的 prefix 仍是 1.57M，與 prefix_nvt8 相同。
+      echo "=== P-mlp: prefix nvt=8 + dropout + MLP 重參數化（enc_hidden=$ENC_HIDDEN）==="
+      python train_prefix.py "${common[@]}" \
+        --peft_method prefix --num_virtual_tokens 8 --prefix_init_scale 0 \
+        --prefix_dropout "$PREFIX_DROPOUT" \
+        --prefix_projection --encoder_hidden_size "$ENC_HIDDEN" \
+        --lr "$PREFIX_LR" --output_dir "$OUT/prefix_nvt8_mlp" \
+        2>&1 | tee "$OUT/prefix_nvt8_mlp.log"
+      ;;
     prefix16drop)
       # 2026-09-13 新增，最高優先。eval/check_prefix_symmetry.py 實測發現
       # 既有的 nvt=16 / 64 兩臂**沒開 dropout**，零初始化又讓所有位置起點相同，
@@ -115,7 +139,7 @@ for arm in $ARMS; do
         --lr "$PREFIX_LR" --output_dir "$OUT/prefix_nvt8_nodrop" \
         2>&1 | tee "$OUT/prefix_nvt8_nodrop.log"
       ;;
-    *) echo "未知的 arm：$arm（可用：prefix16drop prefix8 prefix8nodrop lorar4）"; exit 1 ;;
+    *) echo "未知的 arm：$arm（可用：prefix8mlp prefix16drop prefix8 prefix8nodrop lorar4）"; exit 1 ;;
   esac
 done
 

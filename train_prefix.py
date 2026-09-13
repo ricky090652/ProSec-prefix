@@ -224,6 +224,15 @@ def main():
     # === 穩定性相關 ===
     ap.add_argument("--warmup_ratio", type=float, default=0.1,
                     help="前期 lr 暖機比例")
+    ap.add_argument("--prefix_projection", action="store_true",
+                    help="用 MLP 重參數化 prefix（Li & Liang 2021 的原始做法，PT-PEFT 與 "
+                         "PTC 也都採用；SVEN 不用）。Embedding 隨機初始化、每列不同，"
+                         "只有 MLP 最後一層歸零，所以輸出在 step 0 仍是 0 但對稱性會被打破。"
+                         "MLP 只在訓練時存在，存檔時已摺進 prefix，推論參數量不變")
+    ap.add_argument("--encoder_hidden_size", type=int, default=0,
+                    help="prefix MLP 的中間層寬度（僅 --prefix_projection 時有效）。"
+                         "0 = 用 PEFT 預設（= token_dim，在 Phi-3 上會是 613M 可訓練參數）。"
+                         "Phi-3 的參考值：16→3.4M（≈LoRA qkv）、64→13M、128→26M")
     ap.add_argument("--allow_symmetric_prefix", action="store_true",
                     help="允許「零初始化 + 無 dropout」這個會讓 nvt 個 prefix 位置"
                          "永遠相同的設定（有效長度 = 1）。只有在刻意重現舊結果時才用")
@@ -318,12 +327,19 @@ def main():
         peft_kwargs = {}
         if zero_init and _HAS_INIT_WEIGHTS:
             peft_kwargs["init_weights"] = "zero"
+        if args.prefix_projection:
+            peft_kwargs["prefix_projection"] = True
+            if args.encoder_hidden_size > 0:
+                peft_kwargs["encoder_hidden_size"] = args.encoder_hidden_size
         peft_cfg = PrefixTuningConfig(
             task_type=TaskType.CAUSAL_LM,
             num_virtual_tokens=args.num_virtual_tokens,
             **peft_kwargs,
         )
-        print(f"PEFT=PrefixTuning nvt={args.num_virtual_tokens}")
+        print(f"PEFT=PrefixTuning nvt={args.num_virtual_tokens}"
+              + (f" projection=True enc_hidden="
+                 f"{args.encoder_hidden_size or 'token_dim(預設)'}"
+                 if args.prefix_projection else ""))
         # 零初始化把 K 和 V 全設 0，於是 nvt 個位置在 step 0 完全相同。由對稱性
         # 它們收到相同的梯度，Adam 的 m/v 初始也是 0，所以更新量也相同——沒有
         # 任何隨機來源的話，它們永遠保持相同。2026-09-13 實測（見
@@ -331,7 +347,8 @@ def main():
         # nvt=64 是 1.03，而帶 dropout 的 nvt=8 是 4.84。也就是說不開 dropout 時，
         # 加長 prefix 只增加 attention 吸收的代價，學到的內容完全沒變多。
         # SVEN 預設就有 dropout（sven/model.py:20），所以它沒踩到。
-        if zero_init and args.num_virtual_tokens > 1 and args.prefix_dropout <= 0:
+        if zero_init and args.num_virtual_tokens > 1 and args.prefix_dropout <= 0 \
+                and not args.prefix_projection and not args.allow_symmetric_prefix:
             raise SystemExit(
                 f"❌ 零初始化 + nvt={args.num_virtual_tokens} + 無 dropout：\n"
                 "   nvt 個 prefix 位置會永遠保持相同（有效長度 = 1），\n"
@@ -340,7 +357,7 @@ def main():
                 "   或用 --prefix_init_scale 非 0 改成隨機初始化。\n"
                 "   確實要重現這個壞掉的設定時，用 --allow_symmetric_prefix。")
         if zero_init and args.num_virtual_tokens > 1 and args.prefix_dropout <= 0 \
-                and args.allow_symmetric_prefix:
+                and not args.prefix_projection and args.allow_symmetric_prefix:
             print("⚠️  已用 --allow_symmetric_prefix 略過對稱性檢查——"
                   "這一臂的有效 prefix 長度會是 1")
 
