@@ -15,6 +15,9 @@ Toolchains (install prebuilt to $HOME, no sudo): js -> node, cpp -> g++.
 Usage (validate with js first):
   python eval/run_multipl_e.py --adapter ./outputs/phi3-prefix-dpo-full --langs js --limit 20
   python eval/run_multipl_e.py --adapter ./outputs/phi3-prefix-dpo-full --langs js,cpp
+
+  註：MultiPL-E 只有 js / cpp / java。**python 要用 eval/run_humaneval.py**，
+      論文對齊的 utility 是 cpp + js + py 三語言平均，py 那一欄從那支來。
 """
 import argparse
 import json
@@ -135,6 +138,18 @@ def main():
                     help="套進 chat template 的 system 訊息。**必須與訓練時一致**：用 --system_prompt 訓練出來的 adapter，評測時不給就會 OOD。ProSec 論文管線用的是 \"You are helpful coding assistant.\"；早期的 prefix 實驗訓練時沒有 system prompt，那些要維持不給")
     args = ap.parse_args()
 
+    langs = [s.strip() for s in args.langs.split(",") if s.strip()]
+    # MultiPL-E 是「把 HumanEval 翻譯成其他語言」的資料集，**本身不含 python**。
+    # python 那一欄要用 eval/run_humaneval.py 跑。不擋的話這裡只會噴 KeyError。
+    unknown = [x for x in langs if x not in LANG_CFG]
+    if unknown:
+        hint = ("\n   python 不在 MultiPL-E 裡（它是 HumanEval 的翻譯版），"
+                "請改用：\n     python eval/run_humaneval.py --adapter <路徑> "
+                "--max_new_tokens 2048 --out <輸出>"
+                if any(x in ("py", "python") for x in unknown) else "")
+        raise SystemExit(f"不支援的語言：{', '.join(unknown)}"
+                         f"（可用：{', '.join(LANG_CFG)}）{hint}")
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token_id is None:
@@ -172,7 +187,7 @@ def main():
         return extract_code(tokenizer.decode(new, skip_special_tokens=True))
 
     result = {}
-    for lang in [s.strip() for s in args.langs.split(",") if s.strip()]:
+    for lang in langs:
         ds = load_dataset("nuprl/MultiPL-E", LANG_CFG[lang], split="test")
         if args.limit:
             ds = ds.select(range(args.limit))
