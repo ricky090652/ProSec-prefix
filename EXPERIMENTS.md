@@ -1240,6 +1240,76 @@ S3 應把 max_length 提到 1536（p95 約 1032）並記錄影響。
 
 ---
 
+## 結果總表（2026-09-13 更新）
+
+全部 DPO、β=0.05、800 步、batch 64、seed 42。安全性 = 693 題 × 10 樣本 × 5 語言平均
+（SE ≈ 0.60 pt）；功能性 = HumanEval(py) + MultiPL-E(cpp, js) 平均（SE ≈ 2~3 pt）。
+
+| 臂 | 參數量 | 掛在哪 | 安全性 Δ | 功能性 Δ |
+|---|---|---|---|---|
+| `lora` | 12.58M | 全部線性層 | **−14.24** | −4.12 |
+| `lora_attn` | 7.67M | qkv + o_proj (r=13) | −9.20 | −6.17 |
+| `lora_mlp` | 7.86M | gate_up + down (r=8) | −5.86 | −1.64 |
+| `lora_qkv` | 3.15M | qkv (r=8) | −2.58 | +1.03 |
+| `prefix_nvt8` | 1.57M | 前綴 KV, dropout 0.1 | −3.00 | −7.22 |
+| `prefix`(nvt=16) | 3.15M | 前綴 KV, 無 dropout | −6.04 | −16.91 |
+| *ProSec Table 8 DPO* | — | 未公開 | *−6.11* | *+1.42* |
+
+base 漏洞率 47.94%；base HumanEval 70.73%、MultiPL-E js 59.63%、cpp 46.58%。
+
+**判讀**
+- 同參數下（3.15M）prefix 的安全性較高（−6.04 vs −2.58）但功能性代價大得多（−16.91 vs +1.03）。
+- 參數配平下（約 7.8M）注意力勝過 MLP（−9.20 vs −5.86），但功能性代價也高 3.8 倍。
+- **沒有任何一臂同時做到「漏洞率降約 6 點 + 功能性上升」**（論文 Table 8 DPO 的趨勢）。
+  `lora_mlp` 的安全性最接近（−5.86 vs −6.11，在 SE 內），功能性 −1.64 在誤差內。
+  ProSec 未公開 LoRA 的 target modules，所以無法判定差異來源。
+- `lora`、`lora_attn` 的 python 退化守門未過；其餘全過。
+
+### seen / unseen CWE 拆帳（`eval/score_generalization.py`）
+
+訓練涵蓋 12 個 CWE、評測 50 個 → 66.8% 題目屬於訓練過的 CWE、33.2% 未見。
+
+| 臂 | seen Δ | unseen Δ | 比值 |
+|---|---|---|---|
+| `lora` | −16.07 | −2.57 | 0.16 |
+| `lora_attn` | −9.27 | −1.17 | 0.13 |
+| `lora_mlp` | −5.59 | −1.74 | 0.31 |
+| `lora_qkv` | −2.40 | −0.39 | 0.16 |
+| `prefix_nvt8` | −2.85 | −2.65 | **0.93** |
+
+**判讀**：四個 LoRA 變體（參數差 4 倍、位置完全不同）比值都落在 0.13~0.31，prefix 是 0.93。
+⚠️ 四個 LoRA 臂的 unseen Δ 都在雜訊內（SE ≈ 1.44 pt），正確說法是「未見 CWE 上的改善
+低於偵測門檻」，不是「完全不泛化」。比值的對比由 seen 那欄（5~16 SE）撐起，可信。
+
+### PT-PEFT 的 effective rank 診斷（`eval/effective_rank.py`）
+
+| | 論文 (BLIP-2) | 我們 (Phi-3) |
+|---|---|---|
+| base | 68.2% | 72.7% |
+| LoRA | 52.0%（塌 −16.2） | 72.7%（+0.0） |
+| prefix | 68.2%（持平） | 74.2% / 82.0%（+1.6 / +9.4） |
+
+**判讀**：PT-PEFT 的兩半前提在我們的設定上都不成立。但這個指標對 LoRA 沒有解析度
+（`lora_qkv` 與 `lora` 完全同值，安全性卻差 5.5 倍），**只能用來否證前提，不能當
+utility 的代理指標**。
+
+### prefix 初始化（`eval/check_prefix_symmetry.py`）
+
+零初始化讓 nvt 個位置起點相同，無 dropout 時永遠不分化：
+
+| 臂 | dropout | 有效列數 |
+|---|---|---|
+| `prefix`(nvt=16) | 無 | **1.01 / 16** |
+| `prefix_nvt64` | 無 | **1.03 / 64** |
+| `prefix_nvt8` | 0.1 | 4.84 / 8 |
+
+**判讀**：nvt=16 / 64 兩臂的有效長度是 1，不能解釋成「較長的 prefix」。主結果用的是
+`prefix_nvt8`，不受影響。SVEN 預設有 dropout 所以沒踩到。
+
+**文獻對照**：Li & Liang 2021、PT-PEFT、PTC 都用 MLP 重參數化（理由是「直接最佳化
+prefix 會不穩定」，而我們確實量到 prefix 臂 grad_norm 尖峰到 1e5、LoRA 平穩在 ~40）；
+只有 SVEN 不用，我們跟的是 SVEN。`train_prefix.py` 已補上 `--prefix_projection`。
+
 ## 里程碑
 
 - [ ] **M0** S0 + S0.5 —— 知道正確操作點，且數字不是退化偽造的
