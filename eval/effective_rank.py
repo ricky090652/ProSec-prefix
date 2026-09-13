@@ -21,6 +21,13 @@
   prefix ≈ base，LoRA 明顯低   → PT-PEFT 前提成立，進 Prefix→LoRA 四臂實驗
   prefix 也明顯低              → 前提不成立，放棄該線（但這是可寫的 negative result）
 
+  ⚠️ 適用範圍很窄——它只夠**否證前提**，不能當 utility 的代理指標。
+     2026-09-13 實測：lora_qkv 與 lora_all 的 rank 完全相同（都 72.7%），連續版的
+     曲線偏離也只差 1.25 倍（6.44e-03 vs 8.05e-03），但兩臂安全性差 5.5 倍。
+     它量的是 teacher-forcing 下 hidden states 的靜態幾何，我們在乎的卻是自迴歸
+     生成的行為——兩者幾乎正交。預設輸入又是 HumanEval 的標準答案，正好是各臂
+     最不會分歧之處；要看出差別得用 --data 換成安全性 prompt 的分布。
+
 方法（PT-PEFT §2.3，公式 1–5）：
   對每個樣本取最後一層 hidden states F ∈ R^{L×d} → SVD 取奇異值 → 除以總和正規化
   → 跨樣本平均 → 累積和 → 取累積和達 --threshold(0.9) 的 remaining rank ratio。
@@ -206,11 +213,16 @@ def main():
     print("\n判讀：")
     print("  2026-09-13 實測（Phi-3 + ProSec DPO 四臂）否證了 PT-PEFT 的兩半前提——")
     print("  LoRA 沒有讓 rank 塌（+0.0），prefix 反而把 rank 推高（+1.6 / +9.4）。")
-    print("  但「曲線偏離」的排序與 utility 損害一致（4/4）：")
-    print("    prefix16 0.148 > prefix8 0.0254 > lora_all 0.00805 > lora_qkv 0.00644")
-    print("    utility  −16.91  >  −7.22       >  −4.12          >  +1.03")
-    print("  → 決定 utility 的是**擾動表示空間的幅度**（往哪個方向都算），")
-    print("    不是 PT-PEFT 假設的「rank 塌陷」。rank 高不等於語意豐富。")
+    print("  rank 高不等於語意豐富：prefix16 的 rank 最高卻 utility 最差，而它的 16 個")
+    print("  prefix 位置實測是同一個向量（check_prefix_symmetry.py，有效列數 1.01）。")
+    print()
+    print("  ⚠️  這個指標只夠用來否證 PT-PEFT 的前提，**不能拿來預測 utility**：")
+    print("      prefix16 0.148 / prefix8 0.0254 ｜ lora_all 0.00805 / lora_qkv 0.00644")
+    print("      曲線偏離只分得出「prefix vs LoRA」（差 3~20 倍）。LoRA 組內只差 1.25 倍，")
+    print("      但那兩臂的安全性差 5.5 倍（−2.58 vs −14.24）——組內完全沒有解析度。")
+    print("      原因：量的是 teacher-forcing 下的靜態幾何，而安全性/pass@1 取決於自迴歸")
+    print("      生成逐步累積的 argmax；預設輸入又是 HumanEval 的標準答案，正是兩個")
+    print("      LoRA 臂最不會分歧之處。要看出差別請用 --data 換成安全性 prompt 的分布。")
 
     if args.csv_dir:
         os.makedirs(args.csv_dir, exist_ok=True)
