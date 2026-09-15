@@ -58,9 +58,9 @@ PREFIX_LR="${PREFIX_LR:-5e-5}"
 LORA_LR="${LORA_LR:-5e-6}"
 # SVEN 的 --dropout 預設值
 PREFIX_DROPOUT="${PREFIX_DROPOUT:-0.1}"
-# prefix MLP 的中間層寬度。16 → 訓練時 3.42M，貼近 LoRA qkv 的 3.15M。
-# 不要用 PEFT 預設（token_dim=3072 → 613M 可訓練參數）。
-ENC_HIDDEN="${ENC_HIDDEN:-16}"
+# prefix MLP 的寬度。照 Li & Liang 2021 footnote 4 用 k=512（table-to-text 的設定）。
+# 訓練時 102.5M 可訓練參數，MLP 訓練後丟棄，部署的 prefix 仍是 1.57M。
+ENC_HIDDEN="${ENC_HIDDEN:-512}"
 
 mkdir -p "$OUT"
 common=(
@@ -100,9 +100,8 @@ for arm in $ARMS; do
       # PEFT 開了 projection 後：Embedding 隨機初始化（每列不同）→ MLP → 最後一層
       # 歸零。所以輸出在 step 0 仍是 0（attention 吸收不變），但對稱性從第一步就破。
       #
-      # enc_hidden=16 讓訓練時可訓練參數 3.42M，貼近 LoRA qkv 的 3.15M，參數比較
-      # 才公平。PEFT 預設會用 token_dim=3072 → 613M，絕對不能用。
-      # MLP 訓練後丟棄，推論時的 prefix 仍是 1.57M，與 prefix_nvt8 相同。
+      # 其餘設定與 prefix_nvt8 完全相同；lr 5e-5 也與 Li & Liang Table 5 一致。
+      # MLP 寬度 512 照原論文。MLP 訓練後丟棄，部署的 prefix 仍是 1.57M。
       echo "=== P-mlp: prefix nvt=8 + dropout + MLP 重參數化（enc_hidden=$ENC_HIDDEN）==="
       python train_prefix.py "${common[@]}" \
         --peft_method prefix --num_virtual_tokens 8 --prefix_init_scale 0 \

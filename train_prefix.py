@@ -230,9 +230,9 @@ def main():
                          "只有 MLP 最後一層歸零，所以輸出在 step 0 仍是 0 但對稱性會被打破。"
                          "MLP 只在訓練時存在，存檔時已摺進 prefix，推論參數量不變")
     ap.add_argument("--encoder_hidden_size", type=int, default=0,
-                    help="prefix MLP 的中間層寬度（僅 --prefix_projection 時有效）。"
-                         "0 = 用 PEFT 預設（= token_dim，在 Phi-3 上會是 613M 可訓練參數）。"
-                         "Phi-3 的參考值：16→3.4M（≈LoRA qkv）、64→13M、128→26M")
+                    help="prefix MLP 的寬度（僅 --prefix_projection 時有效）。"
+                         "Li & Liang 2021 用 512（table-to-text）/ 800（summarization）。"
+                         "0 = PEFT 預設 token_dim（Phi-3 上 613M 可訓練參數）")
     ap.add_argument("--allow_symmetric_prefix", action="store_true",
                     help="允許「零初始化 + 無 dropout」這個會讓 nvt 個 prefix 位置"
                          "永遠相同的設定（有效長度 = 1）。只有在刻意重現舊結果時才用")
