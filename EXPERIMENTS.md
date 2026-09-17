@@ -1310,6 +1310,27 @@ utility 的代理指標**。
 prefix 會不穩定」，而我們確實量到 prefix 臂 grad_norm 尖峰到 1e5、LoRA 平穩在 ~40）；
 只有 SVEN 不用，我們跟的是 SVEN。`train_prefix.py` 已補上 `--prefix_projection`。
 
+### prefix + MLP 重參數化（2026-09-17）
+
+`prefix_nvt8_mlp`：與 `prefix_nvt8` 唯一差別是 `--prefix_projection --encoder_hidden_size 512`
+（Li & Liang 2021 footnote 4 的寬度；lr 5e-5 也與該論文 Table 5 一致）。
+
+訓練指標（800 步收尾值）：
+
+| | `prefix_nvt8` | `prefix_nvt8_mlp` |
+|---|---|---|
+| loss | 0.57 | **0.02** |
+| rewards/margins | 0.4 | **30** |
+| rewards/accuracies | 0.72 | **1.00**（step ~200 即飽和） |
+| rewards/chosen | −0.6 | **−25** |
+| rewards/rejected | −1.2 | −55 |
+
+**判讀**：訓練指標全面變好，但 `chosen` 掉 −25（β=0.05 → chosen 的 log-prob 掉約 500 nats），
+margin 是靠 rejected 掉更快換來的。這是 likelihood displacement 的典型形狀
+（Razin et al., ICLR 2025, arXiv:2410.08847），與我們先前 SimPO 崩潰時相同。
+accuracy 在 step ~200 就飽和，之後 600 步只在拉開數值。
+**benchmark 未跑完前不得宣稱改善**；若功能性崩掉，checkpoint-200 是替代選擇。
+
 ## 里程碑
 
 - [ ] **M0** S0 + S0.5 —— 知道正確操作點，且數字不是退化偽造的
