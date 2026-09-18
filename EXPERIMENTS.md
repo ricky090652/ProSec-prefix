@@ -1355,8 +1355,18 @@ accuracy 在 step ~200 就飽和，之後 600 步只在拉開數值。
 
 **結論**：MLP 重參數化讓每一步的有效更新量大幅放大，lr 5e-5 在 100 步內就走過頭。
 β=0.05 跨臂固定不可動，所以要調的是 lr。
-下一步：`PREFIX_LR=1e-5 ARMS=prefix8mlp`（舊的改名為 `prefix_nvt8_mlp_lr5e-5` 保留），
-跑完先只測 HumanEval，掉幅在 10 pt 內再跑全量安全性，否則再降到 5e-6。
+**lr 1e-5 重訓（`verify_arms.py` 確認除 lr 外逐項相同）：無效。**
+訓練曲線與 5e-5 幾乎重疊，兩次的 `chosen` 都收斂到約 −23。原因是 DPO 的梯度在
+margin 拉大後消失，兩次都停在同一個飽和點——**lr 只決定多快到達，不決定終點**。
+
+**MLP 有沒有讓訓練變好？** 目標函數上有：無 MLP 的 `prefix_nvt8` 幾乎學不動
+（accuracy 0.72、margin 0.4、loss 0.57），加了之後 accuracy 1.00、margin 30、loss 0.02，
+正是 Li & Liang 說的「直接最佳化 prefix 很難」。但結果上沒有：margin 是靠 `chosen`
+掉到 −23 換來的，模型學到「兩邊都壓低、rejected 壓更低」。
+
+下一步：改 β（直接限制偏離 reference 的幅度）。`BETA=0.1 PREFIX_LR=5e-5 ARMS=prefix8mlp`。
+⚠️ `rewards/chosen = β × log(π/π_ref)`，跨 β 比較要換算成 `reward ÷ β`。
+⚠️ 改 β 後這一臂不再與其他臂共用目標函數，報告時要標明。
 
 ## 里程碑
 
