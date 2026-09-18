@@ -1329,7 +1329,22 @@ prefix 會不穩定」，而我們確實量到 prefix 臂 grad_norm 尖峰到 1e
 margin 是靠 rejected 掉更快換來的。這是 likelihood displacement 的典型形狀
 （Razin et al., ICLR 2025, arXiv:2410.08847），與我們先前 SimPO 崩潰時相同。
 accuracy 在 step ~200 就飽和，之後 600 步只在拉開數值。
-**benchmark 未跑完前不得宣稱改善**；若功能性崩掉，checkpoint-200 是替代選擇。
+
+**benchmark 結果（step 800）：模型崩潰，安全性數字無效。**
+
+| | `prefix_nvt8` | `prefix_nvt8_mlp` |
+|---|---|---|
+| 安全性 Δ（5 語言平均） | −3.00 | −42.32 |
+| HumanEval pass@1 | −7.22 | **70.73% → 3.66%** |
+| MultiPL-E js | — | 59.63% → 5.59% |
+| MultiPL-E cpp | — | 46.58% → **0.00%** |
+
+生成長度變 3 倍、10% 撞 2048 token 上限、語法完整率 −19.6 pt。安全性 −42.32 是
+「生成不可執行的程式碼所以分析器抓不到漏洞」，不是真的變安全。
+
+**結論**：MLP 重參數化讓最佳化變得太有效，同樣的 800 步 / lr 5e-5 直接衝過頭。
+修法是早停（`save_steps 100`，checkpoint 100~800 都在），不是放棄 MLP。
+下一步：用 HumanEval 快篩 checkpoint 100/200/300，挑 pass@1 仍 ≥60% 的再跑全量安全性。
 
 ## 里程碑
 
