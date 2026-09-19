@@ -739,6 +739,12 @@
 - [x] **S1-code** `run_lr_sweep.sh` 加 `OBJECTIVE` 參數
 - [x] **S1-lr** SimPO lr 確認（1e-4 / 3e-4 / 1e-3）→ **三組全部失敗，問題不在 lr**
 - [x] **S1-verify** 核對 ProSec Appendix C Table 6 → **找到三處設定不符，見下**
+- [x] **S1-impl** 核對 TRL 0.12.2 的 SimPO 實作（2026-09-19）→ **四個易錯點全部正確**：
+      `average_log_prob=loss_type in ["ipo","simpo"]`（`cpo_trainer.py:768`，長度歸一化有生效）、
+      `simpo_gamma=args.gamma`（`train_prefix.py:187`，γ 真的傳進去、不是吃 TRL 預設）、
+      `cpo_alpha=0`（純 SimPO，非 CPO-SimPO 混合）、
+      loss = `−logσ(β·logits − γ)`（`cpo_trainer.py:642-649`，符合 SimPO 原式）、
+      reward 為 reference-free 的 `β·logps`。**崩塌不是實作錯誤。**
 - [x] **S1-lr2** 論文設定重掃 lr {5e-6, 2e-5, 5e-5} @ batch 64 → **三組都健康，未達上限**
 - [x] **S1-lr3** 往上探 lr {1e-4, 2e-4} → **2e-4 進入崩潰區，定案 5e-5**
 - [x] **S0-e** `lr_5e-5` 小規模安全評測 → **OVERALL −5.00，退化守門三項全過**
@@ -1388,6 +1394,27 @@ margin 拉大後消失，兩次都停在同一個飽和點——**lr 只決定�
 
 ⚠️ **方法教訓**：HumanEval 單獨看是 −9.76，三語言合計是 −18.37（js 掉 25.47）。
 python 那一欄會嚴重低估傷害，快篩可以用它，最終判定必須三語言。
+
+### SimPO 與 DPO 是同一種失效（2026-09-19 重新檢視舊圖）
+
+重畫 `outputs/train_simpo_full.log`（prefix + SimPO，1500 步，β=1.5、γ=0.5）：
+
+| | 斷崖前 | 斷崖後（step ~450-500） |
+|---|---|---|
+| rewards/chosen | −0.55 | **−5.3** |
+| rewards/rejected | −0.55 | −6.3 |
+| rewards/margins | 0.05 | 1.0 |
+| accuracies | 0.40 | 0.68 |
+
+`chosen` 與 `rejected` **同時**斷崖，margin 由 rejected 掉更快而來——與 DPO 各臂
+完全相同的形狀。SimPO 是 reference-free（TRL `CPOTrainer`），reward = β × 平均每
+token log 機率，所以換算後每 token 機率從 **69.3% 掉到 2.9%**（24 倍），掉的是
+絕對機率，沒有 DPO 那種「兩邊一起掉但差值還在」的緩衝。
+
+📌 更正：先前記錄的「每 token 機率 3.2e-06」是 **LoRA + SimPO 復現**那次
+（chosen −0.45 → −19），不是這次 prefix 的 SimPO。兩次都崩，LoRA 那次更徹底。
+
+**意義**：問題不在特定目標函數，而在「這類偏好最佳化目標 + 這份資料」的組合。
 
 ## 里程碑
 
