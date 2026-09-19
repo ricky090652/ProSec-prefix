@@ -14,6 +14,7 @@
       --lang python --num_gen 10 --out_prefix ./outputs/icd_phi3
 """
 import argparse
+import sys
 import json
 import os
 import re
@@ -104,7 +105,9 @@ def main():
         args.model, torch_dtype=torch.bfloat16,
         device_map={"": 0} if device == "cuda" else None,
     )
-    model = PeftModel.from_pretrained(base, args.adapter)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from nested_adapter import load_adapter
+    model, adapter_off = load_adapter(base, args.adapter)
     model.eval()
 
     langset = set(s.strip() for s in args.langs.split(",") if s.strip())
@@ -170,7 +173,7 @@ def main():
                 pairs.append((f_on, *gen(prompt, qseed)))
             if want_off:
                 # OFF = 關掉 adapter 的 base model
-                with model.disable_adapter():
+                with adapter_off():
                     pairs.append((f_off, *gen(prompt, qseed)))
             for f, resp, trunc in pairs:
                 f.write(json.dumps({

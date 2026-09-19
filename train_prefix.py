@@ -43,7 +43,7 @@ try:
 except Exception:
     pass
 from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
 from peft import LoraConfig, PrefixTuningConfig, TaskType
 from trl import CPOConfig, CPOTrainer, DPOConfig, DPOTrainer
 
@@ -126,7 +126,35 @@ def build_dataset(train_file, tokenizer, use_chat_template, system_prompt=None,
     return ds
 
 
-def build_trainer(args, beta, model, peft_cfg, tokenizer, train_ds):
+class _SaveNestedAdapters(TrainerCallback):
+    """套疊訓練時 HF 只會存外層（prefix），中途 checkpoint 會缺內層 LoRA。
+
+    這個 callback 讓每個 checkpoint 都存成 <ckpt>/{prefix,lora}，與最終輸出同一種
+    結構。挑 checkpoint 是這條路線的必要步驟（step 800 常已過度最佳化），缺了
+    LoRA 的 checkpoint 沒辦法評測。
+    """
+
+    def __init__(self, model):
+        self.model = model
+
+    def on_save(self, args, state, control, **kwargs):
+        import os as _os
+        d = _os.path.join(args.output_dir, f"checkpoint-{state.global_step}", "lora")
+        self.model.base_model.save_pretrained(d)
+
+
+def _lora_targets(args, model):
+    """決定 LoRA 要掛哪些模組。lora 與 prefix_then_lora 共用。"""
+    if args.lora_target_modules != "auto":
+        return [m.strip() for m in args.lora_target_modules.split(",") if m.strip()]
+    mtype = model.config.model_type
+    if mtype not in LORA_TARGETS:
+        raise SystemExit(f"model_type={mtype} 沒有內建 LoRA target modules，"
+                         "請用 --lora_target_modules 明確指定")
+    return LORA_TARGETS[mtype]
+
+
+def build_trainer(args, beta, model, peft_cfg, tokenizer, train_ds, ref_model=None):
     """依 objective 選 trainer。兩條路徑共用 dataset、peft config 與 logging。"""
     common = dict(
         output_dir=args.output_dir,
@@ -162,7 +190,7 @@ def build_trainer(args, beta, model, peft_cfg, tokenizer, train_ds):
     else:
         # 給了 peft_config + ref_model=None → TRL 用 disable_adapter 當 reference。
         cfg = DPOConfig(loss_type=args.loss_type, **common)
-        cls, kwargs = DPOTrainer, {"ref_model": None}
+        cls, kwargs = DPOTrainer, {"ref_model": ref_model}
 
     kwargs.update(model=model, args=cfg, train_dataset=train_ds, peft_config=peft_cfg)
     # TRL 版本相容：新版用 processing_class，舊版用 tokenizer
@@ -177,7 +205,7 @@ def main():
     ap.add_argument("--train_file", default="data/sample_pref.jsonl")
     ap.add_argument("--output_dir", default="outputs/phi3-prefix-dpo")
     # === PEFT 方法 ===
-    ap.add_argument("--peft_method", choices=["prefix", "lora"], default="prefix",
+    ap.add_argument("--peft_method", choices=["prefix", "lora", "prefix_then_lora"], default="prefix",
                     help="prefix=本研究主線；lora=ProSec 論文原本的做法（Appendix C）")
     ap.add_argument("--num_virtual_tokens", type=int, default=16,
                     help="僅 --peft_method prefix 時使用")
@@ -224,6 +252,8 @@ def main():
     # === 穩定性相關 ===
     ap.add_argument("--warmup_ratio", type=float, default=0.1,
                     help="前期 lr 暖機比例")
+    ap.add_argument("--stage1_prefix", default=None,
+                    help="prefix_then_lora 專用：第一階段訓練好的 prefix adapter 路徑")
     ap.add_argument("--prefix_projection", action="store_true",
                     help="用 MLP 重參數化 prefix（Li & Liang 2021 的原始做法，PT-PEFT 與 "
                          "PTC 也都採用；SVEN 不用）。Embedding 隨機初始化、每列不同，"
@@ -264,7 +294,7 @@ def main():
     # 會再串接一次，key 長度變成 (L+nvt)+L，attention mask 對不上直接爆
     # （RuntimeError: The expanded size of the tensor ... at non-singleton dimension 3）。
     # LoRA 沒有這個問題，因為它不碰 past_key_values。
-    if args.gradient_checkpointing and args.peft_method == "prefix":
+    if args.gradient_checkpointing and args.peft_method in ("prefix", "prefix_then_lora"):
         print("⚠️  PrefixTuning 與 gradient checkpointing 不相容（prefix 的 "
               "past_key_values 在重算時會被重複串接），已自動關閉。"
               "顯存不夠請改小 --batch_size 或 --max_length")
@@ -306,16 +336,50 @@ def main():
         model.enable_input_require_grads()  # PEFT + gradient checkpointing 需要
 
     zero_init = args.peft_method == "prefix" and args.prefix_init_scale == 0.0
-    if args.peft_method == "lora":
-        if args.lora_target_modules == "auto":
-            mtype = model.config.model_type
-            if mtype not in LORA_TARGETS:
-                raise SystemExit(
-                    f"model_type={mtype} 沒有內建 LoRA target modules，"
-                    "請用 --lora_target_modules 明確指定")
-            targets = LORA_TARGETS[mtype]
-        else:
-            targets = [m.strip() for m in args.lora_target_modules.split(",") if m.strip()]
+    ref_model = None
+    if args.peft_method == "prefix_then_lora":
+        # PT-PEFT（Kim et al. 2024）第二階段：從訓練好的 prefix 出發掛上 LoRA，
+        # 原文 §3「we adjust the parameters, **including prefixes**」——兩者一起訓。
+        #
+        # peft 0.19.1 只支援「LoRA 在內、prefix 在外」這個順序；反過來會在 LoRA
+        # 注入時呼叫 get_base_model() 而崩潰。
+        #
+        # reference 用明確的 base+prefix（第一階段的模型、凍結），不用 TRL 預設的
+        # disable_adapter——那會關掉外層 prefix、留下隨訓練漂移的 LoRA，DPO 不能用
+        # 會動的 reference。TRL 只在同時傳 peft_config 時才禁止 ref_model。
+        import json as _json, os as _os
+        from peft import PeftModel, get_peft_model
+        from safetensors.torch import load_file
+        if not args.stage1_prefix:
+            raise SystemExit("--peft_method prefix_then_lora 需要 --stage1_prefix "
+                             "指向第一階段訓練好的 prefix adapter")
+        targets = _lora_targets(args, model)
+        model = get_peft_model(model, LoraConfig(
+            task_type=TaskType.CAUSAL_LM, r=args.lora_r, lora_alpha=args.lora_alpha,
+            lora_dropout=args.lora_dropout, target_modules=targets, bias="none"))
+        s1 = _json.load(open(_os.path.join(args.stage1_prefix, "adapter_config.json")))
+        model = get_peft_model(model, PrefixTuningConfig(
+            task_type=TaskType.CAUSAL_LM,
+            num_virtual_tokens=s1["num_virtual_tokens"]))
+        w = load_file(_os.path.join(args.stage1_prefix, "adapter_model.safetensors"))
+        model.prompt_encoder["default"].load_prompt_embeddings(w["prompt_embeddings"])
+        # 外層 get_peft_model 會把內層 LoRA 一起凍結，兩者都要解凍
+        for n_, p_ in model.named_parameters():
+            if "lora_" in n_ or "prompt_encoder" in n_:
+                p_.requires_grad_(True)
+        n_tr = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"PEFT=prefix_then_lora  nvt={s1['num_virtual_tokens']}（載自 "
+              f"{args.stage1_prefix}）+ LoRA r={args.lora_r} targets={targets}"
+              f"　可訓練參數 {n_tr:,}")
+        ref_model = PeftModel.from_pretrained(
+            AutoModelForCausalLM.from_pretrained(args.model, **model_kwargs),
+            args.stage1_prefix).eval()
+        for p_ in ref_model.parameters():
+            p_.requires_grad_(False)
+        print(f"DPO reference = 第一階段模型（base + prefix），已凍結")
+        peft_cfg = None
+    elif args.peft_method == "lora":
+        targets = _lora_targets(args, model)
         peft_cfg = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=args.lora_r, lora_alpha=args.lora_alpha,
@@ -368,18 +432,22 @@ def main():
         print(f"取隨機子集：{args.max_samples} 筆")
     print(f"訓練資料：{len(train_ds)} 筆偏好對（subset={args.subset}）")
 
-    trainer = build_trainer(args, beta, model, peft_cfg, tokenizer, train_ds)
+    trainer = build_trainer(args, beta, model, peft_cfg, tokenizer, train_ds,
+                            ref_model=ref_model)
 
     # === prefix 初始值 ===
     # PEFT 預設隨機初始化，會讓 policy 從第 0 步就大幅偏離 base，造成 reward 量級爆炸。
     # 零初始化 → policy 起步 ≈ base（仿 SVEN）。優先用 PEFT 原生 init_weights，
     # 舊版 PEFT 或需要中間值（如 0.01）時才退回手動縮放。
+    if args.peft_method == "prefix_then_lora":
+        trainer.add_callback(_SaveNestedAdapters(trainer.model))
+
     if args.prefix_dropout > 0:
         n = attach_prefix_dropout(trainer.model, args.prefix_dropout)
         print(f"prefix dropout={args.prefix_dropout}（掛在 {n} 個 prompt_encoder 上，對齊 SVEN）")
 
-    if args.peft_method == "lora":
-        # LoRA 的 B 矩陣預設就是零，policy 起步已經 == base，不需要額外處理
+    if args.peft_method in ("lora", "prefix_then_lora"):
+        # LoRA 的 B 矩陣預設就是零；prefix_then_lora 的 prefix 是載入的，不可再縮放，policy 起步已經 == base，不需要額外處理
         pass
     elif zero_init and _HAS_INIT_WEIGHTS:
         print("prefix 初始化：PEFT 原生 init_weights='zero'")
@@ -395,7 +463,15 @@ def main():
         print("prefix 初始化：PEFT 預設隨機（不穩，僅供 ablation）")
 
     trainer.train()
-    trainer.save_model(args.output_dir)
+    if args.peft_method == "prefix_then_lora":
+        # 外層是 prefix、內層是 LoRA，各存一個子目錄；評測時兩層都要載回來
+        import os as _os
+        trainer.save_model(args.output_dir)                      # 根目錄 = 外層 prefix
+        trainer.model.base_model.save_pretrained(
+            _os.path.join(args.output_dir, "lora"))              # 內層 LoRA
+        print(f"套疊 adapter 已存到 {args.output_dir}（根 = prefix、lora/ = LoRA）")
+    else:
+        trainer.save_model(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
     print(f"完成。{args.peft_method} adapter 已存到 {args.output_dir}")
 

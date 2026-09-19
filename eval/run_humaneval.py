@@ -15,6 +15,7 @@
 注意：會在子行程執行模型生成的程式碼（HumanEval 慣例），請在可信環境跑。
 """
 import argparse
+import sys
 import json
 import re
 import subprocess
@@ -109,7 +110,9 @@ def main():
         args.model, torch_dtype=torch.bfloat16,
         device_map={"": 0} if device == "cuda" else None,
     )
-    model = PeftModel.from_pretrained(base, args.adapter)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from nested_adapter import load_adapter
+    model, adapter_off = load_adapter(base, args.adapter)
     model.eval()
 
     ds = load_dataset("openai_humaneval", split="test")
@@ -150,7 +153,7 @@ def main():
             if use_prefix:
                 raw, trunc = gen(ex["prompt"])
             else:
-                with model.disable_adapter():
+                with adapter_off():
                     raw, trunc = gen(ex["prompt"])
             n_trunc += int(trunc)
             code = extract_code(raw)

@@ -20,6 +20,7 @@ Usage (validate with js first):
       論文對齊的 utility 是 cpp + js + py 三語言平均，py 那一欄從那支來。
 """
 import argparse
+import sys
 import json
 import os
 import re
@@ -161,7 +162,9 @@ def main():
         args.model, torch_dtype=torch.bfloat16,
         device_map={"": 0} if device == "cuda" else None,
     )
-    model = PeftModel.from_pretrained(base, args.adapter)
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from nested_adapter import load_adapter
+    model, adapter_off = load_adapter(base, args.adapter)
     model.eval()
 
     @torch.no_grad()
@@ -199,7 +202,7 @@ def main():
                 if use_prefix:
                     code = gen_code(ex["prompt"], lang)
                 else:
-                    with model.disable_adapter():
+                    with adapter_off():
                         code = gen_code(ex["prompt"], lang)
                 program = assemble(lang, code, ex["tests"])
                 with tempfile.TemporaryDirectory() as wd:
