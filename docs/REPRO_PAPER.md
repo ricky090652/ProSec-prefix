@@ -53,7 +53,9 @@ lora-simpo/  →  既有 eval 管線（不需修改）
 | 目標函數 | SimPO（TRL `CPOTrainer`, `cpo_alpha=0`）| §4 Eq.(8) |
 | lr | **5e-6** | Appendix C Table 6 |
 | β / γ | **1.5 / 0.5** | Appendix C Table 6 |
-| steps | **1500**（Phi-3-mini）| Appendix C Table 6 |
+| steps | **1500**（SimPO, Phi-3/4-mini-Inst；其他模型 400）| Appendix C Table 6 |
+| **DPO 的超參數** | **lr=5e-6, β=0.05, steps=800** | Appendix C Table 6（同表另一列）|
+| IPO / ORPO | IPO lr=5e-6 temp=0.5 steps=1200；ORPO lr=5e-6 β=1.0 steps=1500 | Appendix C Table 6 |
 | total batch size | **64** | Appendix C |
 | PEFT | **LoRA r=8, α=16** | Appendix C |
 | warm-up | D_sec、**1000 steps**、每 **100** 步存 checkpoint | §4「Warm-up Training for Influence Score」|
@@ -87,7 +89,7 @@ prosecalign/top2-cds-0.8-kendall-on-neg_if-corr-max-2
 |---|---|---|
 | LoRA target modules | Phi-3 的 all-linear：`qkv_proj, o_proj, gate_up_proj, down_proj` | 論文只寫 r/α。他們用的 `SeCAlign-llama-factory` 未公開；LLaMA-Factory 預設是 all-linear。PEFT 的內建 mapping 沒有 `phi3` 條目，不指定會直接報錯 |
 | lr schedule / warmup | cosine、warmup_ratio 0.1 | SimPO 官方 recipe。論文未提 |
-| max_grad_norm | 1.0 | LLaMA-Factory 預設。**注意主線 prefix 實驗用的是 0.3**，兩者不可混談 |
+| max_grad_norm | 1.0 | LLaMA-Factory 預設，論文未寫。**主線（prefix 與所有 DPO 臂）用的是 0.3**——這是 `outputs/repro-paper/lora-simpo` 與 `outputs/dpo-arms/lora` 之間唯一非論文的差異，其餘（lr / β / steps / batch / LoRA r,α）兩臂都照 Table 6 各自那一列 |
 | max_length | 2048（prompt 1024）| ProSec `training_dynamics_refactored.py` 的 `MAX_LENGTH = 2048`。主線用的 1024 會截斷 12% 的樣本（S1-loc） |
 | batch 拆法 | 4 × grad_accum 16 = 64 | 論文用 2×A100-40G；我們單卡，只要乘積是 64 就等價 |
 | 截斷方向 | 超長時砍 prompt 的頭，不砍 response 的尾 | response 被截斷會同時扭曲長度歸一化的分子與分母 |
