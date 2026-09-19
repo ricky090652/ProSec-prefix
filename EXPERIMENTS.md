@@ -1416,6 +1416,28 @@ token log 機率，所以換算後每 token 機率從 **69.3% 掉到 2.9%**（24
 
 **意義**：問題不在特定目標函數，而在「這類偏好最佳化目標 + 這份資料」的組合。
 
+### 舊 SimPO adapter 的 benchmark（2026-09-20）
+
+當初只看訓練曲線就判定 SimPO 崩潰、改用 DPO。實際拿存下來的 adapter 測 HumanEval
+（base 70.73%）：
+
+| adapter | 設定 | pass@1 | Δ | 截斷 |
+|---|---|---|---|---|
+| `repro-paper/lora-simpo` | 論文 Table 6 SimPO 列，all-linear，1500 步 | **3.66%** | −67.07 | 0/164 |
+| `phi3-prefix-simpo-full` | prefix + SimPO，1500 步 | **68.9%** | **−1.83** | 1/164 |
+
+**LoRA + SimPO 確實崩了**（照論文設定也一樣）——這是有 benchmark 依據的復現失敗，
+不再只是曲線判讀。
+
+**但 prefix + SimPO 的功能性幾乎完好**，比我們所有 prefix 臂都好（`prefix_nvt8` −7.22）。
+它的訓練曲線顯示 chosen 掉到 −5.3（每 token 機率 2.9%），我們據此判它崩掉——**判錯了**。
+
+📌 第二次證明訓練曲線會誤導：MLP+DPO 曲線漂亮卻崩掉，prefix+SimPO 曲線難看卻沒事。
+**判定一律以 benchmark 為準。**
+
+下一步：`phi3-prefix-simpo-full` 的全量安全性 + MultiPL-E。若安全性可觀而功能性維持
+−2 左右，它的取捨會遠勝目前所有 prefix 臂。
+
 ## 里程碑
 
 - [ ] **M0** S0 + S0.5 —— 知道正確操作點，且數字不是退化偽造的
