@@ -1426,8 +1426,9 @@ token log 機率，所以換算後每 token 機率從 **69.3% 掉到 2.9%**（24
 | `repro-paper/lora-simpo` | 論文 Table 6 SimPO 列，all-linear，1500 步 | **3.66%** | −67.07 | 0/164 |
 | `phi3-prefix-simpo-full` | prefix + SimPO，1500 步 | **68.9%** | **−1.83** | 1/164 |
 
-**LoRA + SimPO 確實崩了**（照論文設定也一樣）——這是有 benchmark 依據的復現失敗，
-不再只是曲線判讀。
+**LoRA + SimPO 的 step 1500 崩了，但 checkpoint-300 沒有**：pass@1 **67.07%**、
+Δ −3.66、0 截斷（對照 `lora`(DPO) 的 −4.27）。所以是**訓練過頭**，不是方法不可用
+——與 MLP prefix 完全相同的形狀。checkpoint 間隔 300，可選 300/600/900/1200/1500。
 
 **但 prefix + SimPO 的功能性幾乎完好**，比我們所有 prefix 臂都好（`prefix_nvt8` −7.22）。
 它的訓練曲線顯示 chosen 掉到 −5.3（每 token 機率 2.9%），我們據此判它崩掉——**判錯了**。
