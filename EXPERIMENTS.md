@@ -1486,6 +1486,23 @@ DPO 走 800 步拿到 −14.24。所以這不是「SimPO 不如 DPO」，是**�
 期望值不高——`lora`(DPO) 已重現論文 Table 1 的安全性（33.70 vs 33.47），主線不缺這塊。
 **SimPO 線到此為止**，寫成有 benchmark 依據的復現失敗。
 
+### PT-PEFT 第一次評測無效（2026-09-22）
+
+`prefix_then_lora` 第一次全量評測：安全性 −0.53（5 語言平均）、HumanEval +1.22——
+比第一階段單獨的 `prefix_nvt8`（−3.00）還弱，異常。
+
+**原因：評測程式的 bug，套疊結構的 `generate()` 會漏掉 prefix。** forward 有用到、
+generate 沒有（tiny-gpt2 實測：套疊的 generate 與只有 LoRA 的 generate 完全相同）。
+PEFT 的 prefix 在生成時把 hook 掛到它包住的那一層，套疊時那一層是 LoRA 的 PeftModel，
+而真正執行生成的是更底層的 HF 模型，hook 接不上。
+
+- **訓練是對的**（走 forward；step 0 loss = ln2 證實 policy 含 prefix）
+- **評測是錯的**：上述數字量到的是「base + 第二階段 LoRA」，沒有 prefix → **作廢**
+
+修正（`eval/nested_adapter.py`）：ON 改成把 LoRA `merge_and_unload()` 進權重後再接
+單層 prefix；OFF 另載一份純 base。已驗證 ON 的 generate 與 forward 都等於正解、
+OFF 等於純 base。訓練產物不用重跑，**只需重新評測**。
+
 ## 里程碑
 
 - [ ] **M0** S0 + S0.5 —— 知道正確操作點，且數字不是退化偽造的
