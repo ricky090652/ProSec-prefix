@@ -55,6 +55,9 @@ def adapter_kind(adapter_path):
     這個標籤會誤導（兩臂的輸出看起來一模一樣，分不出跑的是哪個）。
     """
     import json as _json, os as _os
+    # prefix_then_lora 的套疊結構：根目錄 = prefix、lora/ = LoRA（見 nested_adapter.py）
+    if _os.path.isdir(_os.path.join(adapter_path, "lora")):
+        return "prefix+LoRA"
     for name in ("adapter_config.json",):
         path = _os.path.join(adapter_path, name)
         if _os.path.exists(path):
