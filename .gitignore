@@ -23,3 +23,7 @@ prefix_implementation.md
 
 # 投影片（不進版控）
 *.pptx
+
+# 本機備份與投影片產生器（只留在本機）
+docs/.*.bak
+docs/build_deck.py
