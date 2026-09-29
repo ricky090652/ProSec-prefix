@@ -1257,6 +1257,7 @@ S3 應把 max_length 提到 1536（p95 約 1032）並記錄影響。
 | `lora_attn` | 7.67M | qkv + o_proj (r=13) | −9.20 | −6.17 |
 | `lora_mlp` | 7.86M | gate_up + down (r=8) | −5.86 | −1.64 |
 | `lora_qkv` | 3.15M | qkv (r=8) | −2.58 | +1.03 |
+| `lora_qkv_mlp` | 11.01M | qkv + gate_up + down (r=8) | *待測* | **−2.48** |
 | `prefix_nvt8` | 1.57M | 前綴 KV, dropout 0.1 | −3.00 | −7.22 |
 | `prefix`(nvt=16) | 3.15M | 前綴 KV, 無 dropout | −6.04 | −16.91 |
 | *ProSec Table 8 DPO* | — | 未公開 | *−6.11* | *+1.42* |
@@ -1270,6 +1271,37 @@ base 漏洞率 47.94%；base HumanEval 70.73%、MultiPL-E js 59.63%、cpp 46.58%
   `lora_mlp` 的安全性最接近（−5.86 vs −6.11，在 SE 內），功能性 −1.64 在誤差內。
   ProSec 未公開 LoRA 的 target modules，所以無法判定差異來源。
 - `lora`、`lora_attn` 的 python 退化守門未過；其餘全過。
+
+### `lora_qkv_mlp`（2026-09-24）：o_proj 不是功能性殺手
+
+功能性 **−2.48**（HumanEval −1.22 / js **+1.24** / cpp **−7.45**，皆 0 截斷）。
+
+**這一臂與 `lora` 的唯一差別是移除 `o_proj`，r 都是 8 —— 乾淨的單變數對照。**
+
+| | 安全性 Δ | 功能性 Δ |
+|---|---|---|
+| `lora`（qkv + **o** + gate_up + down, 12.58M） | −14.24 | −4.12 |
+| `lora_qkv_mlp`（qkv + gate_up + down, 11.01M） | 待測 | **−2.48** |
+| 差異 = `o_proj` @ r=8（1.57M） | 待測 | **1.64 pt** |
+
+**判讀**：`o_proj` 的功能性代價只有 1.64 pt，**在 SE（2~3 pt）內**。
+所以 `lora_attn`（qkv + o, r=13）那 −6.17 的功能性代價，主要來自 **r 從 8 加到 13**，
+不是 o_proj —— 上次「o_proj 是不是功能性主因」的混淆到此解開，答案是**不是**。
+
+功能性落在 `lora`（−4.12）與 `lora_mlp`（−1.64）之間，但三者兩兩差距（1.64 / 0.84 pt）
+都在 SE 內，**分不出高下**。
+
+⚠️ **cpp 與 js 反向**：js +1.24 但 cpp −7.45（12 題淨退步）。`prefix_simpo` 的 cpp
+也剛好是 −7.45，兩臂都落在 39.13%。先記錄，數字再出現一次才值得查。
+
+**安全性是決定性的一測**（加法性粗估 qkv −2.58 + mlp −5.86 ≈ **−8.4**）：
+
+| 若安全性落在 | 效率 | 意思 |
+|---|---|---|
+| −8.4 附近 | 3.39 | 與 `lora`(3.46)、`lora_mlp`(3.57) 同一條線；`o_proj` 用 1.57M 換到約 5.8 pt 安全性、只付 1.64 pt 功能性，**該留著** |
+| −13 以上 | >5.2 | `o_proj` 對安全性幾乎無貢獻 → 這一臂**支配 `lora`**，成為最佳臂 |
+
+- [ ] **lora_qkv_mlp-sec** `ARMS="lora_qkv_mlp" bash scripts/run_full_eval.sh`（OFF 已存在會跳過）
 
 ### seen / unseen CWE 拆帳（`eval/score_generalization.py`）
 
@@ -1298,6 +1330,43 @@ base 漏洞率 47.94%；base HumanEval 70.73%、MultiPL-E js 59.63%、cpp 46.58%
 **判讀**：PT-PEFT 的兩半前提在我們的設定上都不成立。但這個指標對 LoRA 沒有解析度
 （`lora_qkv` 與 `lora` 完全同值，安全性卻差 5.5 倍），**只能用來否證前提，不能當
 utility 的代理指標**。
+
+### prefix 實作核對（2026-09-25）：三條路徑都正確，擾動是結構性的
+
+懷疑「prefix 表現差是實作沒對齊」（input_ids / attention_mask / position_ids）。
+用 4 層 Phi-3 架構逐條驗證，**三條路徑全部正確**：
+
+| 檢查 | 結果 |
+|---|---|
+| `attention_mask` 擴展 | `peft_model.py:1802-1803` 前補 nvt 個 1 ✅ |
+| `position_ids` 偏移 | `peft_model.py:1806-1807`、`2257` 主動 `+nvt`，訓練與生成一致 ✅ |
+| KV 形狀 | 用 `num_attention_heads` 建；Phi-3 非 GQA（kv_heads=32=heads）✅ |
+| 特殊後處理 | mapping 只有 `gpt_bigcode`/`bloom`，phi3 不需要 ✅ |
+| **forward vs generate** | nvt=8/16/64 三組 `max|Δlogit|` ≈ **2e-07**、argmax 相同 ✅ |
+| **`disable_adapter` vs base** | `max|Δlogit|` = **0.00** ✅ |
+
+**但量到一件關鍵的事：零初始化的 prefix 不是零擾動。**
+
+KV 全為 0（等於「什麼都還沒學」）時對 base 最後位置 logits 的影響：
+
+| nvt | max\|Δlogit\| | KL(on‖base) | argmax 是否改變 |
+|---|---|---|---|
+| 1 | 0.066 | 0.0002 | 否 |
+| 4 | 0.208 | 0.0020 | 否 |
+| 8 | 0.332 | 0.0050 | **是** |
+| 16 | 0.457 | 0.0107 | **是** |
+| 64 | 0.657 | 0.0257 | **是** |
+
+**機制**：prefix 的 key = 0 → attention logit = q·0 = 0 → exp(0) = 1，
+所以 softmax 分母多了 nvt 項；而 value = 0 只貢獻零向量。
+**結果是每一層的 attention 輸出被乘上 Σ/(Σ+nvt) < 1**，nvt 越大衰減越多，且 32 層累積。
+
+**與 LoRA 的關鍵不對稱**：LoRA 零初始化時 B=0 → ΔW=0 → 輸出**完全等於 base**
+（上表 `disable_adapter` 的 0.00 就是這個）。**prefix 從一個已經偏離 base 的點出發，
+偏離量由 nvt 決定。** 這解釋了訓練期量到的初始擾動
+（nvt=8/16/64 → −0.4505 / −0.7700 / −4.4414）為什麼隨長度單調上升。
+
+⚠️ 小模型是隨機權重，只證明**機制與單調性**；幅度由 Phi-3 上的實測初始擾動給。
 
 ### prefix 初始化（`eval/check_prefix_symmetry.py`）
 
