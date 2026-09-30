@@ -1,22 +1,20 @@
-"""把 ProSec 偏好資料的 D_sec 轉成 DuoSteer 的 intra-prompt pairs。
+"""Turn ProSec D_sec into DuoSteer-style intra-prompt pairs.
 
-D_sec（benign=False）每筆是同一條誘發漏洞的指令底下的兩份 Phi-3 程式碼：
-chosen = y_f（修好的碼）、rejected = y_v（漏洞碼）。這正好對應 DuoSteer 的
-intra-prompt pair（同一個 prompt 的 safe / vuln），差別只在 DuoSteer 用 benign
-prompt，這裡是 vulnerability-inducing prompt。D_norm 不是 safe/vuln 對比，不收。
+A D_sec row is one vulnerability-inducing instruction with two Phi-3 outputs:
+chosen = y_f (fixed), rejected = y_v (vulnerable). That is an intra-prompt pair
+(p, r_safe, r_vuln). D_norm is not a safe/vuln contrast and is skipped.
 
-切分以「指令」為單位：同一條指令平均對應 2.3 筆 pair（27,400 筆 / 11,939 條），
-按 pair 切會讓同一題同時出現在兩邊（DuoSteer 釋出資料沒有 src_id，就是這樣洩漏的）。
+Split is by instruction: 27,400 pairs share 11,939 instructions, so a pair-level
+split would leak prompts across sides.
 
-輸出（--out_dir 底下）：
-  intra.jsonl    算 steering 向量 / 訓練 probe 用
-  heldout.jsonl  指令與 intra 完全不重疊，留給之後 steering 的設定篩選
-每行：{"id", "src_id", "cwe_id", "lang", "prompt", "safe_code", "vuln_code", "pref_id"}
+Outputs in --out_dir:
+  intra.jsonl    vectors / probes / knockout
+  heldout.jsonl  instructions disjoint from intra, for steering config selection
+Row: {"id", "src_id", "cwe_id", "lang", "prompt", "safe_code", "vuln_code", "pref_id"}
 
-⚠️ 抽樣照原始分布，不做 CWE 分層 —— 這與 LoRA 看到的資料分布相同，
-   但也代表合併向量會被 CWE-338（約 47%）主導。
+Sampling keeps the natural CWE distribution (no stratification), as LoRA sees it.
 
-用法：
+Usage:
   python steering/build_pairs.py --train_file data/train_pref.jsonl \
       --out_dir data/steering --heldout_ratio 0.05 --max_pairs 4000
 """
@@ -29,7 +27,7 @@ from pathlib import Path
 
 
 def cwe_key(cwe):
-    """'CWE-022' / 'cwe-22' / '22' → '22'，與 DuoSteer 的 _cwe_key 一致。"""
+    """'CWE-022' / 'cwe-22' / '22' -> '22'."""
     return str(cwe).lower().removeprefix("cwe-").lstrip("0") or "0"
 
 
@@ -43,9 +41,7 @@ def load_dsec(train_file):
         for line in f:
             r = json.loads(line)
             if "benign" not in r:
-                raise SystemExit(
-                    "資料沒有 benign 欄位，分不出 D_sec；請用新版 "
-                    "data/convert_prosec_to_pref.py 重新轉檔")
+                raise SystemExit("no 'benign' field; re-run data/convert_prosec_to_pref.py")
             if r["benign"]:
                 continue
             rows.append({
@@ -80,21 +76,18 @@ def write(rows, path, tag):
 
 def summary(name, rows):
     n_prompts = len({r["src_id"] for r in rows})
-    by_cwe = Counter(r["cwe_id"] for r in rows).most_common()
-    by_lang = Counter(r["lang"] for r in rows).most_common()
-    print(f"{name}: {len(rows)} pairs / {n_prompts} 條指令")
-    print(f"  CWE : {dict(by_cwe)}")
-    print(f"  lang: {dict(by_lang)}")
+    print(f"{name}: {len(rows)} pairs / {n_prompts} prompts")
+    print(f"  CWE : {dict(Counter(r['cwe_id'] for r in rows).most_common())}")
+    print(f"  lang: {dict(Counter(r['lang'] for r in rows).most_common())}")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--train_file", default="data/train_pref.jsonl")
     ap.add_argument("--out_dir", default="data/steering")
-    ap.add_argument("--heldout_ratio", type=float, default=0.05,
-                    help="以指令為單位留出的比例")
+    ap.add_argument("--heldout_ratio", type=float, default=0.05, help="fraction of prompts held out")
     ap.add_argument("--max_pairs", type=int, default=None,
-                    help="intra 隨機抽 N 筆（照原始分布）；held-out 不抽")
+                    help="random subsample of intra (natural distribution); held-out is not subsampled")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
@@ -104,9 +97,7 @@ def main():
     intra, held = split_by_prompt(rows, args.heldout_ratio, args.seed)
     if args.max_pairs and len(intra) > args.max_pairs:
         intra = random.Random(args.seed).sample(intra, args.max_pairs)
-
-    assert not ({r["src_id"] for r in intra} & {r["src_id"] for r in held}), \
-        "intra 與 held-out 的指令重疊"
+    assert not ({r["src_id"] for r in intra} & {r["src_id"] for r in held}), "prompt overlap"
 
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -114,7 +105,7 @@ def main():
     write(held, out / "heldout.jsonl", "heldout")
     summary("intra", intra)
     summary("heldout", held)
-    print(f"→ {out}/intra.jsonl、{out}/heldout.jsonl")
+    print(f"-> {out}/intra.jsonl, {out}/heldout.jsonl")
 
 
 if __name__ == "__main__":

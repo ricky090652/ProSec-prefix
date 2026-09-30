@@ -28,10 +28,20 @@ python steering/train_probe.py --rep_dir $REP --mode layer
 
 # 3. head probe（1,024 個 × 200 epochs，預估數小時，可以背景跑）
 python steering/train_probe.py --rep_dir $REP --mode head
+
+# 4. causal head knockout（probe 前 256 名 × val split 的 pairs）
+nohup python steering/head_causal_analysis.py --rep_dir $REP --bf16 > causal.log 2>&1 &
 ```
 
 結果在 `$REP/probes/plots/`：`layer_accuracy_results.json`、`head_accuracy_results.json`、
-`best_per_layer.png`、`head_heatmap.png`。
+`best_per_layer.png`、`head_heatmap.png`；knockout 在 `$REP/causal/`：
+`head_causal_results.json`、`head_causal_delta.png`、`head_causal_delta_vs_base.png`。
+knockout 每做完一個 head 就存 checkpoint，中斷後同一行指令重跑會接著做。
+
+**knockout 不用 cross pairs**：DuoSteer 做 cross pairs 只是因為 p^b 底下漏洞碼太少
+（§3.2），knockout 時兩邊都在 p^b 底下打分數（Eq. 1）。D_sec 每個 CWE 有上千筆
+同一指令下的 safe/vuln，直接用；pairs 取 probe 的 val split（§3.3「validation pairs」），
+與算向量的 train split 不重疊。
 
 ## 怎麼讀（對照論文 §4）
 

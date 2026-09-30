@@ -1,20 +1,19 @@
-"""在抽出來的表徵上訓練 linear probe（DuoSteer Stage 2 第二步的移植版）。
+"""Train linear probes on extracted representations.
 
-原版：DuoSteer-Safe-Correct-Code-Gen/localization/train_probe.py。
-每層（或每個 head）各訓一個 nn.Linear(dim, 1) + BCEWithLogits + Adam，
-等同無正則的 logistic regression；label safe=0、vuln=1；存 val 最佳的 checkpoint。
-輸出的 plots/{layer,head}_accuracy_results.json 格式與原版相同。
+Port of DuoSteer localization/train_probe.py. One nn.Linear(dim, 1) per layer or head,
+BCEWithLogits + Adam (unregularized logistic regression), safe=0 / vuln=1, best val
+checkpoint kept. plots/{layer,head}_accuracy_results.json keep the original format.
 
-與原版的差異：
-  1. train/val 一律依 src_id（指令）切分，metadata 沒有 src_id 就直接報錯。
-     原版會退回用 pair id，等於按 pair 隨機切；DuoSteer 釋出的資料正好沒有
-     src_id，所以原版的 val 裡有 75–95% 的 pair 的題目也在 train 出現過。
-  2. 洩漏檢查比的是 src_id（原版比 pair id，每筆唯一，永遠過）。
-  3. --epochs 預設 200（論文 Appendix B.1；原版預設 100）。
+Differences from the original:
+  1. Split is always by src_id (instruction); missing src_id is an error. The original
+     falls back to pair id, which leaks prompts on DuoSteer's released pairs.
+  2. The leakage check compares src_id (the original compares unique pair ids).
+  3. --epochs defaults to 200 (paper Appendix B.1; original default 100).
+  4. torch is seeded, so reruns give identical probes.
 
-用法：
-  python steering/train_probe.py --rep_dir <extract 的輸出目錄> --mode layer
-  python steering/train_probe.py --rep_dir <extract 的輸出目錄> --mode head
+Usage:
+  python steering/train_probe.py --rep_dir <extract output dir> --mode layer
+  python steering/train_probe.py --rep_dir <extract output dir> --mode head
 """
 from __future__ import annotations
 
@@ -43,15 +42,15 @@ class LinearProbe(nn.Module):
 
 
 # --------------------------------------------------------------------------- #
-# 資料
+# Data
 # --------------------------------------------------------------------------- #
 
 def make_split_indices(metadata, val_ratio, seed):
-    """依 src_id 分組後在組的層級洗牌、切分，同一條指令的 pair 一定落在同一邊。"""
+    """Shuffle and split at the src_id level; a prompt's pairs stay on one side."""
     groups = defaultdict(list)
     for p in metadata["pairs"]:
         if not p.get("src_id"):
-            raise SystemExit("metadata 沒有 src_id，無法依指令切分（按 pair 切會洩漏）")
+            raise SystemExit("metadata has no src_id; a pair-level split would leak prompts")
         groups[p["src_id"]].append(p["index"])
     keys = sorted(groups)
     random.Random(seed).shuffle(keys)
@@ -62,7 +61,7 @@ def make_split_indices(metadata, val_ratio, seed):
 
 
 def build_tensors(pt_data, indices, device):
-    """{"safe", "vuln"} → X (2n, dim)、y (2n,)，safe=0、vuln=1。"""
+    """{"safe", "vuln"} -> X (2n, dim), y (2n,) with safe=0, vuln=1."""
     idx = torch.tensor(indices, dtype=torch.long)
     X = torch.cat([pt_data["safe"][idx].float(), pt_data["vuln"][idx].float()]).to(device)
     y = torch.cat([torch.zeros(len(idx)), torch.ones(len(idx))]).to(device)
@@ -70,7 +69,7 @@ def build_tensors(pt_data, indices, device):
 
 
 # --------------------------------------------------------------------------- #
-# 訓練
+# Training
 # --------------------------------------------------------------------------- #
 
 def train_one_probe(X_train, y_train, X_val, y_val, epochs, lr, batch_size, device, ckpt_path):
@@ -97,7 +96,7 @@ def train_one_probe(X_train, y_train, X_val, y_val, epochs, lr, batch_size, devi
 
 
 # --------------------------------------------------------------------------- #
-# 圖（與原版相同的三張）
+# Plots (same three figures as the original)
 # --------------------------------------------------------------------------- #
 
 def plot_val_curves(curves, out_path, title):
@@ -128,8 +127,7 @@ def plot_best_per_layer(best_accs, labels, out_path):
     ax.bar(x, best_accs, color=[cmap(norm(a)) for a in best_accs], edgecolor="none")
     ax.plot(x, best_accs, "o-", color="#333333", linewidth=1.2, markersize=3, alpha=0.8)
     ax.axhline(0.5, color="gray", linestyle="--", linewidth=0.8, alpha=0.6, label="Chance (0.5)")
-    plt.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm), ax=ax,
-                 label="Best Validation Accuracy")
+    plt.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm), ax=ax, label="Best Validation Accuracy")
     ax.set_xlabel("Layer")
     ax.set_ylabel("Best Validation Accuracy")
     ax.set_title("Probe accuracy across transformer layers")
@@ -144,7 +142,7 @@ def plot_best_per_layer(best_accs, labels, out_path):
 
 
 def plot_head_heatmap(acc, out_path):
-    """y = 層（第 1 層在下），x = 層內排名（0 = 該層最準的 head）。"""
+    """y = layer (layer 1 at bottom), x = rank within layer (0 = best head)."""
     n_layers, n_heads = acc.shape
     sorted_acc = -np.sort(-acc, axis=1)
     fig, ax = plt.subplots(figsize=(max(10, n_heads * 0.45), max(6, n_layers * 0.35)))
@@ -165,13 +163,13 @@ def plot_head_heatmap(acc, out_path):
 
 
 # --------------------------------------------------------------------------- #
-# 兩種模式
+# Modes
 # --------------------------------------------------------------------------- #
 
 def run_layer_mode(rep_dir, train_idx, val_idx, args, device, ckpt_dir, plot_dir):
     files = sorted(rep_dir.glob("layer_*.pt"))
     if not files:
-        raise SystemExit(f"{rep_dir} 沒有 layer_*.pt")
+        raise SystemExit(f"no layer_*.pt in {rep_dir}")
     curves, best_accs = {}, []
     for f in files:
         l = int(f.stem.split("_")[1])
@@ -188,9 +186,8 @@ def run_layer_mode(rep_dir, train_idx, val_idx, args, device, ckpt_dir, plot_dir
                      key=lambda r: r["val_accuracy"], reverse=True)
     with open(plot_dir / "layer_accuracy_results.json", "w") as f:
         json.dump(results, f, indent=2)
-    print(f"  最佳層：{results[0]}")
-    plot_val_curves(curves, plot_dir / "val_curves.png",
-                    "Validation accuracy over epochs (layer probes)")
+    print(f"  best layer: {results[0]}")
+    plot_val_curves(curves, plot_dir / "val_curves.png", "Validation accuracy over epochs (layer probes)")
     plot_best_per_layer([a for _, a in best_accs], [str(l) for l, _ in best_accs],
                         plot_dir / "best_per_layer.png")
 
@@ -206,8 +203,8 @@ def run_head_mode(rep_dir, train_idx, val_idx, metadata, args, device, ckpt_dir,
             X_va, y_va = build_tensors(data, val_idx, device)
             _, acc[l, h] = train_one_probe(X_tr, y_tr, X_va, y_va, args.epochs, args.lr,
                                            args.batch_size, device, ckpt_dir / f"{name}_best.pt")
-            print(f"  [{l * n_heads + h + 1}/{n_layers * n_heads}] layer {l + 1:02d} "
-                  f"head {h + 1:02d}  best_val_acc={acc[l, h]:.4f}", end="\r")
+            print(f"  [{l * n_heads + h + 1}/{n_layers * n_heads}] L{l + 1:02d}H{h + 1:02d} "
+                  f"best_val_acc={acc[l, h]:.4f}", end="\r")
     print()
 
     results = []
@@ -215,15 +212,14 @@ def run_head_mode(rep_dir, train_idx, val_idx, metadata, args, device, ckpt_dir,
         rank = {int(h): r for r, h in enumerate(np.argsort(acc[l])[::-1])}
         for h in range(n_heads):
             results.append({"layer": l + 1, "head": h + 1,
-                            "val_accuracy": round(float(acc[l, h]), 6),
-                            "rank_in_layer": rank[h]})
+                            "val_accuracy": round(float(acc[l, h]), 6), "rank_in_layer": rank[h]})
     results.sort(key=lambda r: r["val_accuracy"], reverse=True)
     with open(plot_dir / "head_accuracy_results.json", "w") as f:
         json.dump(results, f, indent=2)
     plot_head_heatmap(acc, plot_dir / "head_heatmap.png")
     b = results[0]
-    print(f"  最佳 head：layer={b['layer']} head={b['head']} acc={b['val_accuracy']:.4f}；"
-          f"平均 {acc.mean():.4f}；≥0.65 的 head 數 {int((acc >= 0.65).sum())}")
+    print(f"  best head: L{b['layer']}H{b['head']} acc={b['val_accuracy']:.4f}; "
+          f"mean={acc.mean():.4f}; heads>=0.65: {int((acc >= 0.65).sum())}")
 
 
 def main(args):
@@ -233,12 +229,11 @@ def main(args):
 
     train_idx, val_idx = make_split_indices(metadata, args.val_ratio, args.seed)
     src = {p["index"]: p["src_id"] for p in metadata["pairs"]}
-    train_src = {src[i] for i in train_idx}
-    val_src = {src[i] for i in val_idx}
-    assert not (train_src & val_src), "同一條指令同時出現在 train 與 val"
-    print(f"{rep_dir}\n  模型 {metadata['model']}，cwe={metadata['cwe_id']}，mode={args.mode}")
-    print(f"  train {len(train_idx)} pairs / {len(train_src)} 條指令；"
-          f"val {len(val_idx)} pairs / {len(val_src)} 條指令")
+    train_src, val_src = {src[i] for i in train_idx}, {src[i] for i in val_idx}
+    assert not (train_src & val_src), "prompt leakage between train and val"
+    print(f"{rep_dir}\n  model={metadata['model']} cwe={metadata['cwe_id']} mode={args.mode}")
+    print(f"  train {len(train_idx)} pairs / {len(train_src)} prompts; "
+          f"val {len(val_idx)} pairs / {len(val_src)} prompts")
 
     out_dir = Path(args.output_dir) if args.output_dir else rep_dir / "probes"
     ckpt_dir, plot_dir = out_dir / "checkpoints", out_dir / "plots"
@@ -251,15 +246,15 @@ def main(args):
         run_layer_mode(rep_dir, train_idx, val_idx, args, device, ckpt_dir, plot_dir)
     else:
         run_head_mode(rep_dir, train_idx, val_idx, metadata, args, device, ckpt_dir, plot_dir)
-    print(f"→ {out_dir}")
+    print(f"-> {out_dir}")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rep_dir", required=True, help="extract_representations.py 的輸出目錄")
+    ap.add_argument("--rep_dir", required=True, help="output dir of extract_representations.py")
     ap.add_argument("--mode", choices=["layer", "head"], required=True)
-    ap.add_argument("--output_dir", default=None, help="預設 <rep_dir>/probes")
-    ap.add_argument("--epochs", type=int, default=200, help="論文 Appendix B.1")
+    ap.add_argument("--output_dir", default=None, help="default: <rep_dir>/probes")
+    ap.add_argument("--epochs", type=int, default=200, help="paper Appendix B.1")
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--batch_size", type=int, default=64)
     ap.add_argument("--val_ratio", type=float, default=0.2)
