@@ -33,6 +33,35 @@ python steering/train_probe.py --rep_dir $REP --mode head
 nohup python steering/head_causal_analysis.py --rep_dir $REP --bf16 > causal.log 2>&1 &
 ```
 
+### Steering（§3.4，Table 2 的 LayerMD / ProbeMD / CausalMD）
+
+```bash
+IJ=$ICD/CybersecurityBenchmarks/datasets/instruct/instruct.json
+
+# 5. steering 向量（MD + PD、layer + head；用 train split，與 knockout 的 val split 不重疊）
+python steering/extract_steering_vector.py --rep_dir $REP
+
+# 6. 在 held-out D_sec 上選設定（論文 Appendix I）：502 有 118 條指令
+SEL=outputs/steer/cwe-502-heldout
+python steering/steer_generate.py --pairs_file data/steering/heldout.jsonl --cwe 502 --num_gen 3 \
+    --setting baseline head --head_results $REP/causal/head_causal_results.json \
+    --vector_dir $REP/vectors --top_k_list 32 --alpha_list 1 2 3 5 10 --out_dir $SEL
+ICD=$ICD bash steering/score_steer.sh $SEL
+
+# 7. 選定的設定在評測集（693 題子集裡的 502，77 題 × 10 樣本）上跑；OFF 直接用既有的
+python steering/steer_generate.py --instruct_json $IJ --safecoder_only --cwe 502 \
+    --setting head --head_results $REP/causal/head_causal_results.json \
+    --vector_dir $REP/vectors --top_k_list <k> --alpha_list <α> --out_dir outputs/steer/cwe-502
+ICD=$ICD bash steering/score_steer.sh outputs/steer/cwe-502 outputs/full_shared.off.norm.jsonl.detected.jsonl
+```
+
+- ProbeMD：把 `--head_results` 換成 `$REP/probes/plots/head_accuracy_results.json`。
+- LayerMD：`--setting layer --layer_list 26`（最佳 probe 層）。
+- PD 版本：加 `--method probe`。
+- 生成協定與 `eval/gen_for_icd.py` 相同（抽樣、逐題 seed），**baseline 與既有的 OFF 逐字相同**
+  （tiny Phi-3 驗證），所以評測集上不用重跑 baseline，steered 與 OFF 是逐題配對的。
+- 中斷後同一行指令重跑會接著做。
+
 結果在 `$REP/probes/plots/`：`layer_accuracy_results.json`、`head_accuracy_results.json`、
 `best_per_layer.png`、`head_heatmap.png`；knockout 在 `$REP/causal/`：
 `head_causal_results.json`、`head_causal_delta.png`、`head_causal_delta_vs_base.png`。

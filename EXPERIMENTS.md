@@ -1619,8 +1619,26 @@ D_sec 的組成（決定合併向量會長什麼樣）：
       論文對照：CWE-022 有 0 個、CWE-295 有 960 個 —— 502 在 Phi-3 上屬於「訊號遍布」那一型。
       ⚠️ 885 個 head 都過門檻，probe 排名幾乎無法區分 head，ProbeMD 的 top-k 選法
       在這裡的鑑別力很低；causal 排名（CausalMD）才是有區辨力的選法。
-- [ ] **ds-causal · CWE-502** knockout：probe 前 256 名 × val split 147 pairs
-      （不用 cross pairs：DuoSteer 做 cross pairs 只為補足漏洞碼數量，D_sec 不缺）
+- [x] **ds-causal · CWE-502**（2026-10-01）knockout：probe 前 256 名 × val split 147 pairs
+      （不用 cross pairs：DuoSteer 做 cross pairs 只為補足漏洞碼數量，D_sec 不缺）→ 見下表
+
+**CWE-502 causal knockout**
+
+| | 我們（Phi-3，ProSec D_sec） | 論文（Llama，§5 / Fig. 2） |
+|---|---|---|
+| Spearman(probe 排名, Δ) | **ρ = −0.022（p≈0.72）** | ρ ∈ [−0.072, +0.023]，p > 0.25 |
+| 最 causal 的 head 在 probe 排第幾 | **150 / 256**（L16H04） | 64–249 |
+| Δ 的量級 | 最負 −0.0026；最正 +0.0047（L21H11） | 色階約 ±0.002 |
+| baseline δ | −0.0761 | 未報告 |
+
+safe-promoting 前 14 名全落在 **L15–L25**（L15×3、L16×2、L17×3、L18–L22、L25）。
+
+**判讀**：論文最核心的發現 ——「probe 排名 ≠ causal 排名」—— 在 Phi-3 + ProSec 上**重現**。
+⚠️ baseline δ < 0（模型每 token 偏好 y_v 0.076 nats）是預期的：y_v 是在指令下直接抽樣，
+y_f 是另一步「修碼」產生的；Δ 是相對 baseline 的變化，不受影響。
+⚠️ 表中的 std（≈0.073）是 δ_ko 本身跨 pair 的標準差，主要來自各 pair 的 baseline 差異，
+**不是 Δ 的誤差**。論文沒有檢定 Δ 的顯著性，排名有沒有用要看 §6.2 的行為驗證
+（CausalMD vs ProbeMD steering）。
 - [ ] **ds-probe · all**（合併 12 個 CWE）
 
 **評測集的 per-CWE 題數**（693 題子集，每題 10 樣本；決定 per-CWE 比較的解析度）：
