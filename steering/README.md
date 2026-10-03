@@ -84,6 +84,27 @@ knockout 每做完一個 head 就存 checkpoint，中斷後同一行指令重跑
 同一指令下的 safe/vuln，直接用；pairs 取 probe 的 val split（§3.3「validation pairs」），
 與算向量的 train split 不重疊。
 
+### Correctness pairs（§3.5，DuoSteer 的第二條向量）
+
+```bash
+# 試跑：每語言 50 題，看 pass/fail 混合的題目比例（mixed%）
+python steering/build_correctness_pairs.py gen --limit 50 --out_dir data/correctness_pilot
+python steering/build_correctness_pairs.py stats --samples data/correctness_pilot/samples.jsonl
+
+# 全量 → ICD 安全過濾 → 配對
+python steering/build_correctness_pairs.py gen --out_dir data/correctness
+(cd $ICD && python prosec_scripts/detect_all.py --fin $REPO/data/correctness/samples.jsonl)
+python steering/build_correctness_pairs.py pair --samples data/correctness/samples.jsonl \
+    --detected data/correctness/samples.jsonl.detected.jsonl
+
+# 之後與 safety 相同的流程（pairs 檔換成 data/correctness/pairs.jsonl）
+python steering/extract_representations.py --input_file data/correctness/pairs.jsonl --cwe_id all --bf16
+```
+
+base model、不加 steering、不加安全指示；python 用 MBPP full、js / cpp 用 MultiPL-E `mbpp-*`，
+與功能性評測（HumanEval、MultiPL-E `humaneval-*`）不重疊。`safe_code` = 通過測試、
+`vuln_code` = 沒通過，所以向量指向「正確」。設計理由見 `EXPERIMENTS.md`。
+
 ## 怎麼讀（對照論文 §4）
 
 | 看什麼 | 論文（Llama，per-CWE） |

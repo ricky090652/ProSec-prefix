@@ -1743,6 +1743,23 @@ safe / vuln 是分開取樣的兩份碼，不相干的部分差很多。
 幾乎無關（|ρ| ≤ 0.072）；要不要用、用哪一層，看 steering / knockout 的結果。
 ⚠️ 「best val acc」是在 val 上挑 200 個 epoch 的最大值，與原版相同，略為樂觀。
 
+**DuoSteer correctness pairs（規劃，2026-10-03）**：合併 CausalMD k32 α10 功能性 −14.19，
+即論文 §6.1 的「V 降、C 崩」，論文的解法是第二條 correctness 向量（§3.5）。
+資料用 MBPP 建（`steering/build_correctness_pairs.py`），設計理由：
+
+- **不用 D_norm**：rejected 是過度安全化、離題的碼（`secrets`、`json`、`uuid`），
+  chosen − rejected 帶有反安全的成分，與 safety 向量互相抵銷；論文要的是兩邊安全程度一致、只差正確性。
+- **生成時不掛 safety steering**：論文 steering 只是為了擴大 safe 樣本池（§3.5）；MBPP 不是資安題，幾乎全是 safe。
+- **不加「寫安全程式」的 prompt**：會誘發防禦性寫法，讓 fail 側和安全寫法綁在一起（論文 §6.4：hint prompting 讓每個 CWE 的 C 都下降）。
+- **MBPP（python 974 題）+ MultiPL-E `mbpp-js` / `mbpp-cpp`（各 397 題）**：與 HumanEval / MultiPL-E `humaneval-*` 不重疊；正確性用 unit test 取代 GPT-4.1；安全用 ICD 過濾。
+- 同題內 pass vs fail 配對，每題最多 2 對，三語言等量；`src_id` = MBPP task id，跨語言共用，同一題的三種語言落在 split 的同一側。
+- 規模估計：1,060–1,600 對 / 530–800 題（假設 30–45% 的題目 pass/fail 混合），論文每個 CWE 約 400 對。
+- 已驗證（本機）：974 題 python stub 用參考解答 974/974 通過；cpp 對 / 錯解答判定正確；假模型跑 gen → pair 的剔除與配對正確。js 未在本機驗證（沒有 node）。
+
+- [ ] **ds-corr-pilot** 每語言 50 題 × N=10 → 實際的混合比例，決定 N 與每題上限
+- [ ] **ds-corr** 全量 gen → ICD → pair
+- [ ] **ds-corr-cos** safety heads 上 cos(v_correct, v_safe)，對照論文 Appendix D（−0.20 ~ +0.15）
+
 ## 里程碑
 
 - [ ] **M0** S0 + S0.5 —— 知道正確操作點，且數字不是退化偽造的
