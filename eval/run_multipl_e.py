@@ -39,6 +39,9 @@ from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "steering"))
+from hooks import add_steer_args, attach_from_args, hooks_off  # noqa: E402
+
 LANG_CFG = {"js": "humaneval-js", "cpp": "humaneval-cpp", "java": "humaneval-java"}
 LANG_NAME = {"js": "JavaScript", "cpp": "C++", "java": "Java"}
 
@@ -132,7 +135,10 @@ def run_program(lang, program, workdir, javatuples_jar, timeout=20):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="microsoft/Phi-3-mini-4k-instruct")
-    ap.add_argument("--adapter", required=True)
+    ap.add_argument("--adapter", default=None,
+                    help="optional when --steer_setting is given (ON = steered base)")
+    ap.add_argument("--skip_off", action="store_true",
+                    help="ON side only; OFF is unchanged across steering configs")
     ap.add_argument("--langs", default="js,cpp")
     ap.add_argument("--max_new_tokens", type=int, default=640)
     ap.add_argument("--limit", type=int, default=None)
@@ -140,7 +146,10 @@ def main():
     ap.add_argument("--out", default="./outputs/multipl_e_result.json")
     ap.add_argument("--system_prompt", default=None,
                     help="套進 chat template 的 system 訊息。**必須與訓練時一致**：用 --system_prompt 訓練出來的 adapter，評測時不給就會 OOD。ProSec 論文管線用的是 \"You are helpful coding assistant.\"；早期的 prefix 實驗訓練時沒有 system prompt，那些要維持不給")
+    add_steer_args(ap)
     args = ap.parse_args()
+    if not args.adapter and not args.steer_setting:
+        raise SystemExit("need --adapter and/or --steer_setting")
 
     langs = [s.strip() for s in args.langs.split(",") if s.strip()]
     # MultiPL-E 是「把 HumanEval 翻譯成其他語言」的資料集，**本身不含 python**。
@@ -159,7 +168,7 @@ def main():
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    kind = adapter_kind(args.adapter)
+    kind = adapter_kind(args.adapter) if args.adapter else None
     print(f"載入 base：{args.model} + {kind}：{args.adapter}")
     base = AutoModelForCausalLM.from_pretrained(
         args.model, torch_dtype=torch.bfloat16,
@@ -167,8 +176,21 @@ def main():
     )
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from nested_adapter import load_adapter
-    model, adapter_off = load_adapter(base, args.adapter)
+    from contextlib import contextmanager, nullcontext
+    if args.adapter:
+        model, adapter_off = load_adapter(base, args.adapter)
+    else:
+        model, adapter_off = base, nullcontext
     model.eval()
+    # ON = adapter (if any) + steering (if any); OFF = neither
+    hooks, steer_label = attach_from_args(model, args)
+    kind = "+".join(x for x in (kind, steer_label) if x)
+    _adapter_off = adapter_off
+
+    @contextmanager
+    def adapter_off():
+        with _adapter_off(), hooks_off(hooks):
+            yield
 
     @torch.no_grad()
     def gen_code(stub, lang):
@@ -214,25 +236,29 @@ def main():
             return passed
 
         TRUNC[0] = 0
-        on, off, n = eval_pass(True), eval_pass(False), len(ds)
+        n = len(ds)
+        on = eval_pass(True)
+        off = None if args.skip_off else eval_pass(False)
         n_trunc = TRUNC[0]
-        result[lang] = {"n": n,
-                        "off_pass@1": round(100.0 * off / n, 2),
-                        "on_pass@1": round(100.0 * on / n, 2),
-                        "delta": round(100.0 * (on - off) / n, 2)}
+        n_gen = n if off is None else 2 * n
+        pct = lambda x: None if x is None else round(100.0 * x / n, 2)  # noqa: E731
+        result[lang] = {"n": n, "label": kind,
+                        "off_pass@1": pct(off),
+                        "on_pass@1": pct(on),
+                        "delta": None if off is None else pct(on - off)}
         result[lang]["truncated"] = n_trunc
         result[lang]["max_new_tokens"] = args.max_new_tokens
-        if n_trunc > 0.02 * 2 * n:
-            print(f"  ⚠️  {lang}：{n_trunc}/{2*n} 次生成撞到 "
+        if n_trunc > 0.02 * n_gen:
+            print(f"  ⚠️  {lang}：{n_trunc}/{n_gen} 次生成撞到 "
                   f"max_new_tokens={args.max_new_tokens}，pass@1 被低估，請調高重跑")
         print(f"  {lang}: OFF {result[lang]['off_pass@1']}%  ON {result[lang]['on_pass@1']}%  "
-              f"Δ {result[lang]['delta']:+}")
+              f"Δ {result[lang]['delta']}")
 
     json.dump(result, open(args.out, "w"), indent=2)
     print("\n==== MultiPL-E pass@1 (instruct mode) ====")
     print(f"{'lang':<8}{'OFF':>8}{'ON':>8}{'Δ':>8}")
     for lang, r in result.items():
-        print(f"{lang:<8}{r['off_pass@1']:>7}%{r['on_pass@1']:>7}%{r['delta']:>+7}")
+        print(f"{lang:<8}{str(r['off_pass@1']):>7}%{r['on_pass@1']:>7}%{str(r['delta']):>8}")
     print(f"saved -> {args.out}")
 
 

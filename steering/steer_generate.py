@@ -36,45 +36,10 @@ from pathlib import Path
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+from hooks import head_hooks, layer_hooks, rank_heads  # noqa: E402
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "eval"))
 from gen_for_icd import SAFECODER_CWES, build_messages, cwe_num  # noqa: E402
-
-
-# --------------------------------------------------------------------------- #
-# Hooks
-# --------------------------------------------------------------------------- #
-
-class SteerLayer:
-    """Adds alpha * v to the output hidden state of one decoder layer."""
-
-    def __init__(self, layer, sv, alpha):
-        self.offset = alpha * sv
-        self._handle = layer.register_forward_hook(self._hook)
-
-    def _hook(self, module, inputs, output):
-        hidden = output[0] if isinstance(output, tuple) else output
-        hidden = hidden + self.offset.to(hidden.device, hidden.dtype)
-        return (hidden,) + output[1:] if isinstance(output, tuple) else hidden
-
-    def remove(self):
-        self._handle.remove()
-
-
-class SteerHead:
-    """Adds alpha * v to one head's slice of the o_proj input."""
-
-    def __init__(self, o_proj, head_idx, head_dim, sv, alpha):
-        self.slice = slice(head_idx * head_dim, (head_idx + 1) * head_dim)
-        self.offset = alpha * sv
-        self._handle = o_proj.register_forward_pre_hook(self._hook)
-
-    def _hook(self, module, inputs):
-        x = inputs[0].clone()
-        x[..., self.slice] += self.offset.to(x.device, x.dtype)
-        return (x,)
-
-    def remove(self):
-        self._handle.remove()
 
 
 # --------------------------------------------------------------------------- #
@@ -103,17 +68,6 @@ def load_prompts(args):
     if args.cwe:
         items = [(i, x) for i, x in items if cwe_num(x["cwe"]) == cwe_num(args.cwe)]
     return items
-
-
-def rank_heads(path):
-    data = json.loads(Path(path).read_text())
-    if isinstance(data, dict) and "heads" in data:
-        return sorted(data["heads"], key=lambda r: r.get("delta_vs_baseline", r["mean_delta"])), "causal"
-    return sorted(data, key=lambda r: r["val_accuracy"], reverse=True), "probe"
-
-
-def load_sv(path):
-    return torch.load(path, map_location="cpu", weights_only=True)["steering_vector"].float()
 
 
 # --------------------------------------------------------------------------- #
@@ -181,11 +135,8 @@ def main(args):
     model = AutoModelForCausalLM.from_pretrained(
         args.model, torch_dtype=torch.bfloat16,
         device_map={"": 0} if device == "cuda" else None).eval()
-    head_dim = model.config.hidden_size // model.config.num_attention_heads
-    o_projs = [m.o_proj for m in model.modules() if hasattr(m, "o_proj")]
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    vec_dir = Path(args.vector_dir) if args.vector_dir else None
     common = {"num_gen": args.num_gen, "temperature": args.temperature, "top_p": args.top_p,
               "seed": args.seed, "max_new_tokens": args.max_new_tokens, "cwe": args.cwe,
               "source": args.instruct_json or args.pairs_file}
@@ -197,9 +148,8 @@ def main(args):
 
         elif setting == "layer":
             for l in args.layer_list:
-                sv = load_sv(vec_dir / "layer" / args.method / f"steering_vector_layer_{l:02d}.pt")
                 for a in args.alpha_list:
-                    hooks = [SteerLayer(model.model.layers[l - 1], sv, a)]
+                    hooks = layer_hooks(model, args.vector_dir, args.method, l, a)
                     run_one(f"layer_L{l:02d}_{args.method}_a{a:g}",
                             {"setting": "layer", "layer": l, "alpha": a, "method": args.method, **common},
                             hooks, items, model, tokenizer, args, device, out_dir)
@@ -208,11 +158,8 @@ def main(args):
             ranked, rtype = rank_heads(args.head_results)
             for k in args.top_k_list:
                 targets = ranked[:k]
-                svs = [load_sv(vec_dir / "head" / args.method /
-                               f"steering_vector_head_{t['layer']:02d}_{t['head']:02d}.pt") for t in targets]
                 for a in args.alpha_list:
-                    hooks = [SteerHead(o_projs[t["layer"] - 1], t["head"] - 1, head_dim, sv, a)
-                             for t, sv in zip(targets, svs)]
+                    hooks = head_hooks(model, args.vector_dir, args.method, targets, a)
                     run_one(f"head_{rtype}_top{k}_{args.method}_a{a:g}",
                             {"setting": "head", "ranking": rtype, "top_k": k, "alpha": a,
                              "method": args.method, "heads": [f"L{t['layer']:02d}H{t['head']:02d}" for t in targets],

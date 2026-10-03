@@ -34,6 +34,9 @@ from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft import PeftModel
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "steering"))
+from hooks import add_steer_args, attach_from_args, hooks_off  # noqa: E402
+
 
 
 
@@ -89,7 +92,10 @@ def run_one(code, test, entry_point, timeout=10):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="microsoft/Phi-3-mini-4k-instruct")
-    ap.add_argument("--adapter", required=True)
+    ap.add_argument("--adapter", default=None,
+                    help="optional when --steer_setting is given (ON = steered base)")
+    ap.add_argument("--skip_off", action="store_true",
+                    help="ON side only; OFF is unchanged across steering configs")
     ap.add_argument("--max_new_tokens", type=int, default=512)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--out", default="./outputs/humaneval_result.json")
@@ -100,14 +106,17 @@ def main():
                          "還是輸出破碎/重複（可能是 adapter 與 KV cache 的互動有問題）")
     ap.add_argument("--system_prompt", default=None,
                     help="套進 chat template 的 system 訊息。**必須與訓練時一致**：用 --system_prompt 訓練出來的 adapter，評測時不給就會 OOD。ProSec 論文管線用的是 \"You are helpful coding assistant.\"；早期的 prefix 實驗訓練時沒有 system prompt，那些要維持不給")
+    add_steer_args(ap)
     args = ap.parse_args()
+    if not args.adapter and not args.steer_setting:
+        raise SystemExit("need --adapter and/or --steer_setting")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    kind = adapter_kind(args.adapter)
+    kind = adapter_kind(args.adapter) if args.adapter else None
     print(f"載入 base：{args.model} + {kind}：{args.adapter}")
     base = AutoModelForCausalLM.from_pretrained(
         args.model, torch_dtype=torch.bfloat16,
@@ -115,8 +124,21 @@ def main():
     )
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from nested_adapter import load_adapter
-    model, adapter_off = load_adapter(base, args.adapter)
+    from contextlib import contextmanager, nullcontext
+    if args.adapter:
+        model, adapter_off = load_adapter(base, args.adapter)
+    else:
+        model, adapter_off = base, nullcontext
     model.eval()
+    # ON = adapter (if any) + steering (if any); OFF = neither
+    hooks, steer_label = attach_from_args(model, args)
+    kind = "+".join(x for x in (kind, steer_label) if x)
+    _adapter_off = adapter_off
+
+    @contextmanager
+    def adapter_off():
+        with _adapter_off(), hooks_off(hooks):
+            yield
 
     ds = load_dataset("openai_humaneval", split="test")
     if args.limit:
@@ -173,15 +195,20 @@ def main():
 
     print(f"評測 {kind} ON ...")
     on_pass, on_trunc = evaluate(True)
-    print(f"評測 {kind} OFF(base) ...")
-    off_pass, off_trunc = evaluate(False)
+    if args.skip_off:
+        off_pass, off_trunc = None, 0
+    else:
+        print(f"評測 {kind} OFF(base) ...")
+        off_pass, off_trunc = evaluate(False)
 
     n = len(ds)
+    pct = lambda x: None if x is None else round(100.0 * x / n, 2)  # noqa: E731
     result = {
         "n": n,
-        "off_pass@1": round(100.0 * off_pass / n, 2),
-        "on_pass@1": round(100.0 * on_pass / n, 2),
-        "delta": round(100.0 * (on_pass - off_pass) / n, 2),
+        "label": kind,
+        "off_pass@1": pct(off_pass),
+        "on_pass@1": pct(on_pass),
+        "delta": None if off_pass is None else pct(on_pass - off_pass),
         "max_new_tokens": args.max_new_tokens,
         "off_truncated": off_trunc,
         "on_truncated": on_trunc,
@@ -201,7 +228,8 @@ def main():
     print(f"HumanEval pass@1（n={n}）")
     print(f"  OFF(base) : {result['off_pass@1']}%")
     print(f"  ON({kind}){' ' * max(0, 6 - len(kind))}: {result['on_pass@1']}%")
-    print(f"  Δ         : {result['delta']:+}%  (≥0 代表功能性未退步)")
+    if result["delta"] is not None:
+        print(f"  Δ         : {result['delta']:+}%  (≥0 代表功能性未退步)")
     # 撞到上限的生成一定執行失敗，pass@1 會被系統性低估。ON 若寫得比 OFF 長，
     # 低估的程度也會不對稱，Δ 因此失真。
     print(f"  撞 max_new_tokens={args.max_new_tokens}："

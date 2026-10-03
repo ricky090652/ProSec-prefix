@@ -55,6 +55,18 @@ python steering/steer_generate.py --instruct_json $IJ --safecoder_only --cwe 502
 ICD=$ICD bash steering/score_steer.sh outputs/steer/cwe-502 outputs/full_shared.off.norm.jsonl.detected.jsonl
 ```
 
+功能性（HumanEval + MultiPL-E，與 LoRA 各臂同一支程式；ON = steered、OFF = 原版）：
+
+```bash
+STEER="--steer_setting head --steer_vector_dir $REP/vectors \
+  --steer_head_results $REP/causal/head_causal_results.json --steer_top_k 32 --steer_alpha 10"
+python eval/run_humaneval.py $STEER --max_new_tokens 2048 --skip_off --out outputs/humaneval_<name>.json
+python eval/run_multipl_e.py $STEER --langs js,cpp --max_new_tokens 2048 --skip_off --out outputs/multipl_e_<name>.json
+```
+
+`--skip_off` 省掉 OFF：greedy 解碼下 base 不變（HumanEval 70.73、js 59.63、cpp 46.58）。
+`--adapter` 與 `--steer_*` 可以同時給（ON = adapter + steering）。hook 在 `steering/hooks.py`。
+
 - ProbeMD：把 `--head_results` 換成 `$REP/probes/plots/head_accuracy_results.json`。
 - LayerMD：`--setting layer --layer_list 26`（最佳 probe 層）。
 - PD 版本：加 `--method probe`。
