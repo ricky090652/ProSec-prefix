@@ -7,8 +7,10 @@ correctness direction carries no safety signal. Here:
          each sample is judged by the task's unit tests. MBPP is disjoint from the
          HumanEval / MultiPL-E humaneval-* functional evaluation.
   ICD    ProSec's detect_all.py on samples.jsonl (safety filter; the paper uses CodeQL).
-  pair   Drop truncated / unfenced / duplicate / flagged / unscanned samples, then pair
-         a passing and a failing sample of the same task (intra-prompt).
+  pair   Drop truncated / malformed-fence / duplicate / flagged / unscanned samples, then
+         pair a passing and a failing sample of the same task (intra-prompt). A response
+         without a code block is taken as code, as the eval scripts do; one that has ```
+         but no well-formed block is dropped.
 
 Output follows steering/build_pairs.py, so extract_representations.py, train_probe.py,
 head_causal_analysis.py and extract_steering_vector.py run unchanged. safe_code holds
@@ -213,10 +215,15 @@ def cmd_gen(args):
 # Stats and pairing
 # --------------------------------------------------------------------------- #
 
+def malformed(raw, fenced):
+    """Has ``` but no well-formed block: the code cannot be told apart from the prose."""
+    return not fenced and "```" in raw
+
+
 def summarize(rows):
     """Per language: pass rate and how many tasks have both passing and failing samples."""
     print(f"\n{'lang':<11}{'tasks':>6}{'samples':>9}{'pass%':>7}{'mixed':>7}{'mixed%':>8}"
-          f"{'trunc':>7}{'unfenced':>9}")
+          f"{'trunc':>7}{'nofence':>8}{'malformed':>10}")
     by = defaultdict(list)
     for r in rows:
         by[r["lang"]].append(r)
@@ -225,9 +232,10 @@ def summarize(rows):
         p = sum(sum(r["passed"]) for r in rs)
         mixed = sum(0 < sum(r["passed"]) < len(r["passed"]) for r in rs)
         tr = sum(sum(r["truncated"]) for r in rs)
-        uf = sum(len(r["fenced"]) - sum(r["fenced"]) for r in rs)
+        nf = sum(len(r["fenced"]) - sum(r["fenced"]) for r in rs)
+        mf = sum(sum(malformed(x, fe) for x, fe in zip(r["raw"], r["fenced"])) for r in rs)
         print(f"{lang:<11}{len(rs):>6}{n:>9}{100 * p / n:>7.1f}{mixed:>7}"
-              f"{100 * mixed / len(rs):>8.1f}{tr:>7}{uf:>9}")
+              f"{100 * mixed / len(rs):>8.1f}{tr:>7}{nf:>8}{mf:>10}")
 
 
 def load_detection(path):
@@ -257,9 +265,10 @@ def cmd_pair(args):
 
     for r in rows:
         good, bad, seen = [], [], set()
-        for code, ok, tr, fe in zip(r["codes"], r["passed"], r["truncated"], r["fenced"]):
+        for code, ok, tr, fe, raw in zip(r["codes"], r["passed"], r["truncated"],
+                                         r["fenced"], r["raw"]):
             c = code.strip()
-            reason = ("truncated" if tr else "unfenced" if not fe else "empty" if not c
+            reason = ("truncated" if tr else "malformed" if malformed(raw, fe) else "empty" if not c
                       else "duplicate" if c in seen else None)
             if reason is None and scanned is not None:
                 key = (r["lang"], r["prompt"], c)
