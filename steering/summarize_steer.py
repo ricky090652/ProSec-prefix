@@ -20,9 +20,12 @@ from score_detected import load_stats, ratio  # noqa: E402
 def row(name, total, vul, per_lang, trunc):
     p = vul / total if total else 0.0
     se = 100 * math.sqrt(p * (1 - p) / total) if total else 0.0
-    langs = " ".join(f"{k}={ratio(*per_lang[k]):.1f}" for k in sorted(per_lang))
+    rates = {k: ratio(*per_lang[k]) for k in sorted(per_lang)}
+    # ProSec reports the mean of per-language rates (Table 1 style)
+    avg = f"{sum(rates.values()) / len(rates):8.2f}" if rates else f"{'':8}"
+    langs = " ".join(f"{k}={v:.1f}" for k, v in rates.items())
     t = "" if trunc is None else f"{100 * trunc:5.1f}"
-    print(f"  {name:<40}{total:>6}{ratio(vul, total):>8.2f}{se:>6.2f}{t:>7}   {langs}")
+    print(f"  {name:<40}{total:>6}{ratio(vul, total):>8.2f}{se:>6.2f}{avg}{t:>7}   {langs}")
 
 
 def main(args):
@@ -30,7 +33,7 @@ def main(args):
     files = sorted(d.glob("*.norm.jsonl.detected.jsonl"))
     if not files:
         raise SystemExit(f"no *.detected.jsonl in {d}; run steering/score_steer.sh first")
-    print(f"{'':2}{'setting':<40}{'n':>6}{'V%':>8}{'SE':>6}{'trunc%':>7}   per-lang V%")
+    print(f"{'':2}{'setting':<40}{'n':>6}{'V%':>8}{'SE':>6}{'langavg':>8}{'trunc%':>7}   per-lang V%")
 
     cwes = set()
     stats = []
