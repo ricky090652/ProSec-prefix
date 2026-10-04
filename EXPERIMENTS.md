@@ -1770,8 +1770,38 @@ safe / vuln 是分開取樣的兩份碼，不相干的部分差很多。
 python 約 660、js 約 250、cpp 約 430 對 → 三語言等量會被 js 卡在約 250 對/語言。
 python 沒有 code block 的 156 個樣本：開頭都是 `import` / `def`，通過率 44%（有 code block 的約 58%），
 只有 2 個含 ``` 但格式壞掉。→ 改成和評測一樣把全文當程式碼保留，只剔除格式壞掉的（`malformed`）。
-- [ ] **ds-corr** 全量 gen → ICD → pair
-- [ ] **ds-corr-cos** safety heads 上 cos(v_correct, v_safe)，對照論文 Appendix D（−0.20 ~ +0.15）
+- [x] **ds-corr**（2026-10-04）全量 gen → ICD → pair（N=10、每題最多 2 對、三語言等量）
+
+| | python | js | cpp |
+|---|---|---|---|
+| pass%（抽樣） | 49.0 | 59.6 | 46.9 |
+| 混合題目 | 382 / 974（39.2%） | 148 / 397（37.3%） | 205 / 397（51.6%） |
+| 過濾後可配題數 / pairs | 368 / 736 | 148 / 296 | 204 / 408 |
+| 等量後保留 | 296 | 296 | 296 |
+
+剔除：重複 2,039、格式壞掉 97、ICD 標記 8、截斷 5；沒掃到 0。→ **888 對 / 391 題**（`data/correctness/pairs.jsonl`）。
+
+**判讀**：ICD 在 17,680 段程式只標記 8 段（0.05%），MBPP 不是資安題，「兩邊都安全」幾乎自動成立，
+安全過濾只是保險。js 是瓶頸（148 題 × 2）。對照論文：每條 correctness 向量約 400 對（Qwen 300），
+平均每題 2.0 對（論文 safety pairs 為 2.0–4.5）。888 對已是論文的 2.2 倍，不放寬每題上限
+（多出來的 pair 大多重複用同一題的程式碼，題目數不會增加）。
+- [x] **ds-corr-causal**（2026-10-04）correctness pairs 的 head probe + knockout（probe 前 256 名 × val split 195 對）
+
+| | correctness | safety（合併 all） |
+|---|---|---|
+| head probe 最佳 | 約 0.61 | 0.768 |
+| Spearman(probe 排名, Δ) | **ρ = −0.025（p≈0.69）** | −0.026（p≈0.68） |
+| 最 causal 的 head 的 probe 排名 | 70 | 100 |
+| 最負 Δ | −0.0033（L32H15） | −0.0020（L19H16） |
+| baseline δ | **+0.0213**（偏好通過測試的碼） | −0.0755 |
+
+**判讀**：「probe 排名 ≠ causal 排名」在 correctness 上同樣成立。probe 準確率偏低（約 0.6），
+correctness 的線性可分性比 safety 弱。⚠️ **L32H15** 是 correctness 最 causal 的 head（Δ −0.0033），
+在 safety knockout 卻是最 **vuln**-promoting 的（+0.0029）：拿掉它，模型同時較不偏好正確碼、較偏好安全碼。
+L25H05 則兩邊都在前 20（correct- 與 safe-promoting）。兩條向量在這些 head 上的方向要看 ds-corr-cos。
+⚠️ `extract_steering_vector.py` 預設 `--method both` 需要 layer probe checkpoint；只跑 head probe 時要加 `--method mean_diff`（DuoSteer 只用 MD）。
+
+- [ ] **ds-corr-cos** safety heads 上 cos(v_correct, v_safe) 與 top-k 重疊（`steering/vector_cosine.py`），對照論文 Table 7（−0.24 ~ +0.16）與 §7（全部 head −0.16 ~ +0.08）
 
 ## 里程碑
 
