@@ -3,6 +3,10 @@
 SteerLayer / SteerHead are the ports of DuoSteer steering/steer_eval.py: alpha * v is
 added at every position (prompt included). Each hook can be switched off without
 being removed, so one model serves both the steered and the unsteered side.
+
+DuoSteer (Eq. 4): the --steer_correct_* args add a second set of head hooks with the
+correctness vectors at the correctness-causal heads. Pre-hooks on one o_proj chain, so
+at a head chosen by both sets the two offsets add up, as in the paper.
 """
 from __future__ import annotations
 
@@ -100,6 +104,12 @@ def add_steer_args(ap):
     g.add_argument("--steer_top_k", type=int, default=32)
     g.add_argument("--steer_layer", type=int, default=None)
     g.add_argument("--steer_alpha", type=float, default=None)
+    g.add_argument("--steer_correct_vector_dir", default=None,
+                   help="DuoSteer: correctness vectors (extract_steering_vector.py output)")
+    g.add_argument("--steer_correct_head_results", default=None,
+                   help="DuoSteer: correctness head_causal_results.json")
+    g.add_argument("--steer_correct_top_k", type=int, default=32)
+    g.add_argument("--steer_correct_alpha", type=float, default=None)
 
 
 def attach_from_args(model, args):
@@ -120,6 +130,16 @@ def attach_from_args(model, args):
         hooks = head_hooks(model, args.steer_vector_dir, args.steer_method,
                            ranked[:args.steer_top_k], args.steer_alpha)
         label = f"head_{rtype}_top{args.steer_top_k}_{args.steer_method}_a{args.steer_alpha:g}"
+    if args.steer_correct_vector_dir:
+        if args.steer_setting != "head":
+            raise SystemExit("--steer_correct_* (DuoSteer) needs --steer_setting head")
+        if args.steer_correct_head_results is None or args.steer_correct_alpha is None:
+            raise SystemExit("--steer_correct_vector_dir needs --steer_correct_head_results "
+                             "and --steer_correct_alpha")
+        ranked, _ = rank_heads(args.steer_correct_head_results)
+        hooks += head_hooks(model, args.steer_correct_vector_dir, args.steer_method,
+                            ranked[:args.steer_correct_top_k], args.steer_correct_alpha)
+        label += f"+corr_top{args.steer_correct_top_k}_a{args.steer_correct_alpha:g}"
     print(f"steering: {label} ({len(hooks)} hooks)")
     return hooks, label
 

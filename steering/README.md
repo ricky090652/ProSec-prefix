@@ -105,6 +105,36 @@ base model、不加 steering、不加安全指示；python 用 MBPP full、js / 
 與功能性評測（HumanEval、MultiPL-E `humaneval-*`）不重疊。`safe_code` = 通過測試、
 `vuln_code` = 沒通過，所以向量指向「正確」。設計理由見 `EXPERIMENTS.md`。
 
+```bash
+# safety vs correctness：top-k 重疊（§3.5）與 cosine（Appendix D / §7）
+python steering/vector_cosine.py \
+    --safety_vectors $REP/vectors --safety_heads $REP/causal/head_causal_results.json \
+    --correct_vectors $REP_C/vectors --correct_heads $REP_C/causal/head_causal_results.json
+```
+
+### DuoSteer（Eq. 4）
+
+safety 向量加在 safety-causal heads、correctness 向量加在 correctness-causal heads；
+同一個 head 兩組都選到時兩項相加。
+
+```bash
+# held-out 粗篩：--setting duo 會 sweep top_k × alpha × correct_top_k × correct_alpha
+python steering/steer_generate.py --pairs_file data/steering/heldout.jsonl --limit 200 --num_gen 3 \
+    --setting duo --head_results $REP/causal/head_causal_results.json --vector_dir $REP/vectors \
+    --top_k_list 32 --alpha_list 10 \
+    --correct_head_results $REP_C/causal/head_causal_results.json --correct_vector_dir $REP_C/vectors \
+    --correct_top_k_list 32 --correct_alpha_list 1 3 5 --out_dir <粗篩目錄>
+ICD=$ICD bash steering/score_steer.sh <粗篩目錄>
+
+# 功能性：在 --steer_* 之外加 --steer_correct_*
+python eval/run_humaneval.py --steer_setting head --steer_vector_dir $REP/vectors \
+    --steer_head_results $REP/causal/head_causal_results.json --steer_top_k 32 --steer_alpha 10 \
+    --steer_correct_vector_dir $REP_C/vectors \
+    --steer_correct_head_results $REP_C/causal/head_causal_results.json \
+    --steer_correct_top_k 32 --steer_correct_alpha <αc> \
+    --max_new_tokens 2048 --skip_off --out outputs/humaneval_duo_c<αc>.json
+```
+
 ## 怎麼讀（對照論文 §4）
 
 | 看什麼 | 論文（Llama，per-CWE） |

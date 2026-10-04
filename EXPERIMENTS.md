@@ -1801,7 +1801,25 @@ correctness 的線性可分性比 safety 弱。⚠️ **L32H15** 是 correctness
 L25H05 則兩邊都在前 20（correct- 與 safe-promoting）。兩條向量在這些 head 上的方向要看 ds-corr-cos。
 ⚠️ `extract_steering_vector.py` 預設 `--method both` 需要 layer probe checkpoint；只跑 head probe 時要加 `--method mean_diff`（DuoSteer 只用 MD）。
 
-- [ ] **ds-corr-cos** safety heads 上 cos(v_correct, v_safe) 與 top-k 重疊（`steering/vector_cosine.py`），對照論文 Table 7（−0.24 ~ +0.16）與 §7（全部 head −0.16 ~ +0.08）
+- [x] **ds-corr-cos**（2026-10-04）`steering/vector_cosine.py`
+
+| k | 8 | 16 | 32 | 64 | 128 | 256 | 全部 1024 |
+|---|---|---|---|---|---|---|---|
+| top-k 重疊 | 0 | 1 | 2 | 11 | 32 | 104 | — |
+| mean cos @ top-k safety heads | −0.304 | −0.331 | −0.325 | −0.265 | −0.267 | −0.281 | −0.216 |
+
+論文（Llama per-CWE）：Table 7 為 −0.24 ~ +0.16、全部 head −0.16 ~ +0.08；top-32 重疊 2/32 ~ 10/32。
+
+**判讀**：反向（anti-aligned），比論文最反向的 CWE-022（約 −0.20）更負，落在論文觀察範圍之外。
+但論文 §7 的說法是反向 / 近正交的 CWE 從 DuoSteer 得到的安全增益**較大**（079：−0.12）；
+022 失敗被歸因於 safety 向量本身沒有因果影響力，不是反向。k=32 時只有 2 個 head 重疊，
+同一個 head 上直接抵銷的範圍很小。cosine 只代表有風險，要用 steering 的行為結果判斷。
+若 V 反彈，下一步用 DuoSteer codebase 的 Method A（`orthogonalize_vectors.py`：correctness 向量對 safety 向量做 Gram-Schmidt）。
+
+- [ ] **ds-duo-screen** held-out 粗篩（同合併 CausalMD 的 200 題 × 3）：safety k32 α10 固定，correctness k32、α_c ∈ {1, 3, 5}
+      → 看 V 是否維持在 CausalMD α10 的 38.0% 附近
+- [ ] **ds-duo-func** 選定的 α_c 跑 HumanEval + MultiPL-E，對照 CausalMD α10 的 −14.19
+      ⚠️ 在 HumanEval 上挑 α_c 屬於論文的 test-swept（能力上界），不是 Appendix I 的 held-out 協定
 
 ## 里程碑
 

@@ -4,6 +4,9 @@ Port of DuoSteer steering/steer_eval.py. Settings (paper Table 2):
   baseline  no hooks
   layer     h_l  <- h_l  + alpha * v_l    output of decoder layer l    (LayerMD / LayerPD)
   head      z_lj <- z_lj + alpha * v_lj   pre-o_proj slice, top-k heads (ProbeMD / CausalMD)
+  duo       head + correctness vectors at the top-k correctness-causal heads (DuoSteer,
+            Eq. 4); sweeps --top_k_list x --alpha_list x --correct_top_k_list x
+            --correct_alpha_list
 Head ranking from --head_results, as in the original: probe json -> val_accuracy desc;
 causal json -> delta_vs_baseline asc (most safe-promoting first). As in the original,
 alpha * v is added at every position, prompt included.
@@ -24,6 +27,13 @@ Usage:
   python steering/steer_generate.py --instruct_json $IJ --safecoder_only --cwe 502 \
       --setting head --head_results $REP/causal/head_causal_results.json \
       --vector_dir $REP/vectors --top_k_list 16 32 --alpha_list 1 3 --out_dir outputs/steer/cwe-502
+  # DuoSteer
+  python steering/steer_generate.py --pairs_file data/steering/heldout.jsonl --limit 200 --num_gen 3 \
+      --setting duo --head_results $REP/causal/head_causal_results.json --vector_dir $REP/vectors \
+      --top_k_list 32 --alpha_list 10 \
+      --correct_head_results $REP_C/causal/head_causal_results.json \
+      --correct_vector_dir $REP_C/vectors --correct_top_k_list 32 --correct_alpha_list 1 3 5 \
+      --out_dir outputs/steer/all-heldout
 """
 from __future__ import annotations
 
@@ -166,6 +176,24 @@ def main(args):
                              **common},
                             hooks, items, model, tokenizer, args, device, out_dir)
 
+        elif setting == "duo":
+            ranked, rtype = rank_heads(args.head_results)
+            c_ranked, _ = rank_heads(args.correct_head_results)
+            for k in args.top_k_list:
+                for a in args.alpha_list:
+                    for kc in args.correct_top_k_list:
+                        for ac in args.correct_alpha_list:
+                            s_t, c_t = ranked[:k], c_ranked[:kc]
+                            hooks = (head_hooks(model, args.vector_dir, args.method, s_t, a)
+                                     + head_hooks(model, args.correct_vector_dir, args.method, c_t, ac))
+                            run_one(f"duo_{rtype}_top{k}_{args.method}_a{a:g}_corr_top{kc}_a{ac:g}",
+                                    {"setting": "duo", "ranking": rtype, "top_k": k, "alpha": a,
+                                     "correct_top_k": kc, "correct_alpha": ac, "method": args.method,
+                                     "heads": [f"L{t['layer']:02d}H{t['head']:02d}" for t in s_t],
+                                     "correct_heads": [f"L{t['layer']:02d}H{t['head']:02d}" for t in c_t],
+                                     "correct_vector_dir": args.correct_vector_dir, **common},
+                                    hooks, items, model, tokenizer, args, device, out_dir)
+
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
@@ -176,7 +204,7 @@ if __name__ == "__main__":
     ap.add_argument("--safecoder_only", action="store_true", help="the 693-prompt subset")
     ap.add_argument("--cwe", default=None, help="keep one CWE, e.g. 502")
     ap.add_argument("--limit", type=int, default=None, help="first N prompts before the CWE filter")
-    ap.add_argument("--setting", nargs="+", choices=["baseline", "layer", "head"], required=True)
+    ap.add_argument("--setting", nargs="+", choices=["baseline", "layer", "head", "duo"], required=True)
     ap.add_argument("--vector_dir", default=None, help="extract_steering_vector.py output")
     ap.add_argument("--method", choices=["mean_diff", "probe"], default="mean_diff")
     ap.add_argument("--head_results", default=None,
@@ -184,6 +212,11 @@ if __name__ == "__main__":
     ap.add_argument("--layer_list", type=int, nargs="+", default=[])
     ap.add_argument("--top_k_list", type=int, nargs="+", default=[16, 32, 64, 128])
     ap.add_argument("--alpha_list", type=float, nargs="+", default=[1, 2, 3, 5, 10])
+    ap.add_argument("--correct_vector_dir", default=None, help="duo: correctness vectors")
+    ap.add_argument("--correct_head_results", default=None,
+                    help="duo: correctness head_causal_results.json")
+    ap.add_argument("--correct_top_k_list", type=int, nargs="+", default=[32])
+    ap.add_argument("--correct_alpha_list", type=float, nargs="+", default=[1, 3, 5])
     ap.add_argument("--model", default="microsoft/Phi-3-mini-4k-instruct")
     ap.add_argument("--num_gen", type=int, default=10)
     ap.add_argument("--max_new_tokens", type=int, default=2048)
@@ -197,4 +230,8 @@ if __name__ == "__main__":
         ap.error("layer setting needs --layer_list and --vector_dir")
     if "head" in args.setting and not (args.head_results and args.vector_dir):
         ap.error("head setting needs --head_results and --vector_dir")
+    if "duo" in args.setting and not (args.head_results and args.vector_dir
+                                      and args.correct_head_results and args.correct_vector_dir):
+        ap.error("duo setting needs --head_results, --vector_dir, "
+                 "--correct_head_results and --correct_vector_dir")
     main(args)

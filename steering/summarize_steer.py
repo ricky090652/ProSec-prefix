@@ -25,7 +25,7 @@ def row(name, total, vul, per_lang, trunc):
     avg = f"{sum(rates.values()) / len(rates):8.2f}" if rates else f"{'':8}"
     langs = " ".join(f"{k}={v:.1f}" for k, v in rates.items())
     t = "" if trunc is None else f"{100 * trunc:5.1f}"
-    print(f"  {name:<40}{total:>6}{ratio(vul, total):>8.2f}{se:>6.2f}{avg}{t:>7}   {langs}")
+    print(f"  {name:<50}{total:>6}{ratio(vul, total):>8.2f}{se:>6.2f}{avg}{t:>7}   {langs}")
 
 
 def main(args):
@@ -33,7 +33,7 @@ def main(args):
     files = sorted(d.glob("*.norm.jsonl.detected.jsonl"))
     if not files:
         raise SystemExit(f"no *.detected.jsonl in {d}; run steering/score_steer.sh first")
-    print(f"{'':2}{'setting':<40}{'n':>6}{'V%':>8}{'SE':>6}{'langavg':>8}{'trunc%':>7}   per-lang V%")
+    print(f"{'':2}{'setting':<50}{'n':>6}{'V%':>8}{'SE':>6}{'langavg':>8}{'trunc%':>7}   per-lang V%")
 
     cwes = set()
     stats = []
