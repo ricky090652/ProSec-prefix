@@ -1816,7 +1816,7 @@ L25H05 則兩邊都在前 20（correct- 與 safe-promoting）。兩條向量在�
 同一個 head 上直接抵銷的範圍很小。cosine 只代表有風險，要用 steering 的行為結果判斷。
 若 V 反彈，下一步用 DuoSteer codebase 的 Method A（`orthogonalize_vectors.py`：correctness 向量對 safety 向量做 Gram-Schmidt）。
 
-- [ ] **ds-duo-screen** held-out 粗篩（同合併 CausalMD 的 200 題 × 3）：safety k32 α10 固定，correctness k32、α_c ∈ {1, 3, 5}
+- [ ] **ds-duo-screen** held-out 粗篩（同合併 CausalMD 的 200 題 × 3，目錄 `outputs/steer/all-heldout`）：safety k32 α10 固定，correctness k32、α_c ∈ {1, 3, 5}
       → 看 V 是否維持在 CausalMD α10 的 38.0% 附近
 - [ ] **ds-duo-func** 選定的 α_c 跑 HumanEval + MultiPL-E，對照 CausalMD α10 的 −14.19
       ⚠️ 在 HumanEval 上挑 α_c 屬於論文的 test-swept（能力上界），不是 Appendix I 的 held-out 協定
